@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,26 +16,19 @@ var (
 	memberStatuses  = map[string]bool{
 		"member":        true,
 		"administrator": true,
-		"creator":       true,
+		"creator":       true, // ChatMemberOwner status
 	}
 )
 
-func retryMarkup(b *gotgbot.Bot, args, link string) *gotgbot.InlineKeyboardMarkup {
-	buttons := [][]gotgbot.InlineKeyboardButton{
-		{
-			{Text: "Jᴏɪɴ", Url: link},
-		},
-	}
-
-	if args != "" {
-		buttons = append(buttons, []gotgbot.InlineKeyboardButton{
-			{Text: "Tʀʏ ᴀɢᴀɪɴ", Url: fmt.Sprintf("https://t.me/%s?start=%s", b.Username, args)},
-		})
-	}
-
-	return &gotgbot.InlineKeyboardMarkup{
-		InlineKeyboard: buttons,
-	}
+// isNotMemberErr reports whether a GetChatMember error simply means the user
+// is not in the chat (Telegram returns "Bad Request: user not found" for users
+// who have never joined), as opposed to a real API failure.
+func isNotMemberErr(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "user not found") ||
+		strings.Contains(s, "participant_not_a_member") ||
+		strings.Contains(s, "member_not_found") ||
+		strings.Contains(s, "not a member")
 }
 
 func fetchInviteLink(b *gotgbot.Bot, chatID int64) (string, error) {
@@ -62,40 +56,66 @@ func fetchInviteLink(b *gotgbot.Bot, chatID int64) (string, error) {
 	return chat.InviteLink, nil
 }
 
+// fSub checks whether the user is a member of ALL configured force-join
+// channels. If not, it sends one message listing join buttons for every
+// missing channel plus a "Try again" button, and returns false.
 func fSub(b *gotgbot.Bot, userId int64, arg string) (bool, error) {
-	chats := FSubIds
-	if len(chats) == 0 {
-		log.Print("FSub IDs not set")
+	if len(FSubIds) == 0 {
+		log.Print("FSub IDs not set — skipping force-join check")
 		return true, nil
 	}
 
-	for _, chatID := range chats {
+	var buttons [][]gotgbot.InlineKeyboardButton
+	for i, chatID := range FSubIds {
+		status := ""
 		userMember, err := b.GetChatMember(chatID, userId, nil)
 		if err != nil {
-			return false, fmt.Errorf("error getting chat member: %s", err)
+			if !isNotMemberErr(err) {
+				return false, fmt.Errorf("error getting chat member: %s", err)
+			}
+			status = "left" // user has never joined / left the channel
+		} else {
+			status = userMember.MergeChatMember().Status
 		}
 
-		mem := userMember.MergeChatMember()
-		if !memberStatuses[mem.Status] {
+		if !memberStatuses[status] {
 			inviteLink, err := fetchInviteLink(b, chatID)
 			if err != nil || inviteLink == "" {
-				return false, fmt.Errorf("invite link not available")
+				return false, fmt.Errorf("invite link not available for chat %d", chatID)
 			}
-
-			btn := retryMarkup(b, arg, inviteLink)
-			_, err = b.SendMessage(userId, "❌ You must be a member of the channel to use this bot.\nPlease join the channel and try again.", &gotgbot.SendMessageOpts{
-				ReplyMarkup: btn,
+			buttons = append(buttons, []gotgbot.InlineKeyboardButton{
+				{Text: fmt.Sprintf("📢 Join Channel %d", i+1), Url: inviteLink},
 			})
-
-			if err != nil {
-				log.Printf("Error sending message: %s", err)
-			}
-
-			return false, nil
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 	}
 
-	return true, nil
+	// Member of every required channel
+	if len(buttons) == 0 {
+		return true, nil
+	}
+
+	tryAgainURL := fmt.Sprintf("https://t.me/%s", b.Username)
+	if arg != "" {
+		// Preserve the referral payload through the join flow
+		tryAgainURL = fmt.Sprintf("https://t.me/%s?start=%s", b.Username, arg)
+	}
+	buttons = append(buttons, []gotgbot.InlineKeyboardButton{
+		{Text: "✅ Joined — Try Again", Url: tryAgainURL},
+	})
+
+	_, err := b.SendMessage(userId,
+		"🔒 <b>Access Locked</b>\n\n"+
+			"To use this bot, join ALL of our channels first, then tap <b>Try Again</b>.",
+		&gotgbot.SendMessageOpts{
+			ParseMode:   "HTML",
+			ReplyMarkup: &gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+		})
+
+	if err != nil {
+		log.Printf("Error sending message: %s", err)
+	}
+
+	return false, nil
 }

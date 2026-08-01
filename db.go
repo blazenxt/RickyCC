@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -17,38 +18,33 @@ type User struct {
 	ReferredUsers []int64 `bson:"referred_users,omitempty" json:"referred_users,omitempty"`
 	AccNo         int64   `bson:"acc_no,omitempty" json:"acc_no,omitempty"`
 	Balance       float64 `bson:"balance,omitempty" json:"balance,omitempty"`
+	HasClaimed    bool    `bson:"has_claimed,omitempty" json:"has_claimed,omitempty"`
+	ClaimedCode   string  `bson:"claimed_code,omitempty" json:"claimed_code,omitempty"`
 }
 
-// Withdrawal statuses
+// Code statuses
 const (
-	WithdrawalPending  = "pending"
-	WithdrawalApproved = "approved"
-	WithdrawalRejected = "rejected"
+	CodeAvailable = "available"
+	CodeClaimed   = "claimed"
 )
 
-// Withdrawal represents a withdrawal request record in MongoDB
-type Withdrawal struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	UserID    int64              `bson:"user_id" json:"user_id"`
-	Amount    float64            `bson:"amount" json:"amount"`
-	AccNo     int64              `bson:"acc_no" json:"acc_no"`
-	Status    string             `bson:"status" json:"status"`
-	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
-	HandledBy int64              `bson:"handled_by,omitempty" json:"handled_by,omitempty"`
-	HandledAt *time.Time         `bson:"handled_at,omitempty" json:"handled_at,omitempty"`
+// Code represents a reward code in the stock
+type Code struct {
+	ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Code       string             `bson:"code" json:"code"`
+	Status     string             `bson:"status" json:"status"`
+	CreatedAt  time.Time          `bson:"created_at" json:"created_at"`
+	ClaimedBy  int64              `bson:"claimed_by,omitempty" json:"claimed_by,omitempty"`
+	ClaimedAt  *time.Time         `bson:"claimed_at,omitempty" json:"claimed_at,omitempty"`
 }
 
 var (
-	userColl       *mongo.Collection
-	withdrawalColl *mongo.Collection
+	userColl *mongo.Collection
+	codeColl *mongo.Collection
 )
 
 func addUser(user User) error {
-	filter := bson.M{"$or": []bson.M{
-		{"_id": user.ID},
-	}}
-
-	count, err := userColl.CountDocuments(ctx, filter)
+	count, err := userColl.CountDocuments(ctx, bson.M{"_id": user.ID})
 	if err != nil {
 		return fmt.Errorf("failed to check user existence: %v", err)
 	}
@@ -76,7 +72,6 @@ func referUser(referrerID, newUserID int64) error {
 	newUser := User{
 		ID:       newUserID,
 		Referrer: referrerID,
-		Balance:  0,
 	}
 
 	err = addUser(newUser)
@@ -100,71 +95,19 @@ func getUser(userID int64) (*User, error) {
 	return &user, nil
 }
 
-// // Retrieve all users referred by a specific user
-// func getReferredUsers(referrerID int64) ([]User, error) {
-// 	// Fetch the referrer's referred_users list
-// 	referrer, err := getUser(referrerID)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	// Fetch details of all referred users
-// 	filter := bson.M{"_id": bson.M{"$in": referrer.ReferredUsers}}
-// 	cursor, err := userColl.Find(ctx, filter)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to retrieve referred users: %v", err)
-// 	}
-// 	defer cursor.Close(ctx)
-
-// 	var referredUsers []User
-// 	if err = cursor.All(ctx, &referredUsers); err != nil {
-// 		return nil, fmt.Errorf("failed to decode referred users: %v", err)
-// 	}
-// 	return referredUsers, nil
-// }
-
-func updateUserBalance(userID int64, amount float64) error {
-	_, err := userColl.UpdateOne(ctx, bson.M{"_id": userID}, bson.M{"$inc": bson.M{"balance": amount}})
+func markUserClaimed(userID int64, code string) error {
+	_, err := userColl.UpdateOne(ctx,
+		bson.M{"_id": userID},
+		bson.M{"$set": bson.M{"has_claimed": true, "claimed_code": code}},
+	)
 	if err != nil {
-		return fmt.Errorf("failed to update balance for user %d: %v", userID, err)
+		return fmt.Errorf("failed to mark user %d as claimed: %v", userID, err)
 	}
 	return nil
 }
 
-func removeBalance(userID int64, amount float64) (float64, error) {
-	if amount <= 0 {
-		return 0, fmt.Errorf("amount to remove must be greater than zero")
-	}
-
-	filter := bson.M{"_id": userID}
-	update := bson.M{"$inc": bson.M{"balance": -amount}}
-	options := options.FindOneAndUpdate().SetReturnDocument(options.After)
-	var updatedUser User
-	err := userColl.FindOneAndUpdate(ctx, filter, update, options).Decode(&updatedUser)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return 0, fmt.Errorf("user with ID %d does not exist", userID)
-		}
-		return 0, fmt.Errorf("failed to update balance: %v", err)
-	}
-
-	if updatedUser.Balance < 0 {
-		_, rollbackErr := userColl.UpdateOne(ctx, filter, bson.M{"$inc": bson.M{"balance": amount}})
-		if rollbackErr != nil {
-			return 0, fmt.Errorf("balance went negative, rollback failed: %v", rollbackErr)
-		}
-		return 0, fmt.Errorf("insufficient balance for user %d", userID)
-	}
-
-	return updatedUser.Balance, nil
-}
-
-func updateUserAccNo(userID int64, accNo int64) error {
-	_, err := userColl.UpdateOne(ctx, bson.M{"_id": userID}, bson.M{"$set": bson.M{"acc_no": accNo}})
-	if err != nil {
-		return fmt.Errorf("failed to update acc_no for user %d: %v", userID, err)
-	}
-	return nil
+func countClaimedUsers() (int64, error) {
+	return userColl.CountDocuments(ctx, bson.M{"has_claimed": true})
 }
 
 func getAllUsers() ([]User, error) {
@@ -181,42 +124,89 @@ func getAllUsers() ([]User, error) {
 	return users, nil
 }
 
-// createWithdrawal stores a new withdrawal request and returns its ID
-func createWithdrawal(w Withdrawal) (primitive.ObjectID, error) {
-	res, err := withdrawalColl.InsertOne(ctx, w)
+// ---------- Reward code stock ----------
+
+// addCodes inserts new codes into the stock, skipping empty lines,
+// in-batch duplicates, and codes that already exist in the database.
+// Returns (added, skipped, error).
+func addCodes(lines []string) (int, int, error) {
+	seen := map[string]bool{}
+	var fresh []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" || seen[l] {
+			continue
+		}
+		seen[l] = true
+		fresh = append(fresh, l)
+	}
+	if len(fresh) == 0 {
+		return 0, 0, fmt.Errorf("no valid codes provided")
+	}
+
+	// Find which of these codes already exist in the DB
+	cursor, err := codeColl.Find(ctx,
+		bson.M{"code": bson.M{"$in": fresh}},
+		options.Find().SetProjection(bson.M{"code": 1}),
+	)
 	if err != nil {
-		return primitive.NilObjectID, fmt.Errorf("failed to create withdrawal: %v", err)
+		return 0, 0, fmt.Errorf("failed to check existing codes: %v", err)
 	}
-	oid, ok := res.InsertedID.(primitive.ObjectID)
-	if !ok {
-		return primitive.NilObjectID, fmt.Errorf("failed to parse withdrawal ID")
+	var existing []Code
+	if err = cursor.All(ctx, &existing); err != nil {
+		return 0, 0, fmt.Errorf("failed to decode existing codes: %v", err)
 	}
-	return oid, nil
+	dup := map[string]bool{}
+	for _, c := range existing {
+		dup[c.Code] = true
+	}
+
+	now := time.Now()
+	var docs []interface{}
+	for _, c := range fresh {
+		if dup[c] {
+			continue
+		}
+		docs = append(docs, Code{Code: c, Status: CodeAvailable, CreatedAt: now})
+	}
+
+	skipped := len(fresh) - len(docs)
+	if len(docs) == 0 {
+		return 0, skipped, nil
+	}
+
+	res, err := codeColl.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
+	if err != nil {
+		return 0, skipped, fmt.Errorf("failed to insert codes: %v", err)
+	}
+	return len(res.InsertedIDs), skipped, nil
 }
 
-// getWithdrawal fetches a withdrawal request by its ID
-func getWithdrawal(id primitive.ObjectID) (*Withdrawal, error) {
-	w := Withdrawal{}
-	err := withdrawalColl.FindOne(ctx, bson.M{"_id": id}).Decode(&w)
+func countAvailableCodes() (int64, error) {
+	return codeColl.CountDocuments(ctx, bson.M{"status": CodeAvailable})
+}
+
+func countClaimedCodes() (int64, error) {
+	return codeColl.CountDocuments(ctx, bson.M{"status": CodeClaimed})
+}
+
+// claimCodeAtomic atomically marks the oldest available code as claimed by the
+// user, so concurrent claims can never hand out the same code twice.
+// Returns mongo.ErrNoDocuments when the stock is empty.
+func claimCodeAtomic(userID int64) (*Code, error) {
+	now := time.Now()
+	opts := options.FindOneAndUpdate().
+		SetReturnDocument(options.After).
+		SetSort(bson.M{"created_at": 1})
+
+	var c Code
+	err := codeColl.FindOneAndUpdate(ctx,
+		bson.M{"status": CodeAvailable},
+		bson.M{"$set": bson.M{"status": CodeClaimed, "claimed_by": userID, "claimed_at": now}},
+		opts,
+	).Decode(&c)
 	if err != nil {
 		return nil, err
 	}
-	return &w, nil
-}
-
-// setWithdrawalStatus marks a pending withdrawal as approved/rejected.
-// The pending-status filter makes the operation safe against double-clicks.
-func setWithdrawalStatus(id primitive.ObjectID, status string, handledBy int64) error {
-	now := time.Now()
-	res, err := withdrawalColl.UpdateOne(ctx,
-		bson.M{"_id": id, "status": WithdrawalPending},
-		bson.M{"$set": bson.M{"status": status, "handled_by": handledBy, "handled_at": now}},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update withdrawal status: %v", err)
-	}
-	if res.MatchedCount == 0 {
-		return fmt.Errorf("withdrawal not found or already processed")
-	}
-	return nil
+	return &c, nil
 }

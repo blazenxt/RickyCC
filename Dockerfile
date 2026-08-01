@@ -6,7 +6,7 @@ RUN apk add --no-cache git
 
 COPY . .
 
-RUN go build -ldflags="-w -s" -o Earnify .
+RUN go build -ldflags="-w -s" -o premiumcard .
 
 # Stage 2: Final image
 FROM alpine:3.20.2
@@ -14,6 +14,6 @@ FROM alpine:3.20.2
 RUN apk --no-cache add ca-certificates && \
     apk update && apk upgrade --available && sync
 
-COPY --from=builder /app/Earnify /Earnify
+COPY --from=builder /app/premiumcard /premiumcard
 
-ENTRYPOINT ["/Earnify"]
+ENTRYPOINT ["/premiumcard"]
