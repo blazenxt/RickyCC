@@ -88,4 +88,4 @@ go build -o premiumcard .
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Originally based on [Earnify](https://github.com/AshokShau/Earnify) by [@AshokShau](https://github.com/AshokShau), heavily reworked.
+MIT — see [LICENSE](LICENSE).
