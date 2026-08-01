@@ -24,8 +24,6 @@ import (
 const (
 	// BrandName is displayed in bot messages.
 	BrandName = "⚕️ PREMIUM CARD"
-	// ReferralTarget is how many friends a user must refer to unlock a reward.
-	ReferralTarget = 5
 )
 
 var (
@@ -34,8 +32,6 @@ var (
 	MongoDBURI     string
 	secretToken    string
 	OwnerID        int64
-	LoggerID       int64
-	FSubIds        []int64
 	ctx            = context.TODO()
 	allowedUpdates = []string{"message", "callback_query"}
 )
@@ -52,12 +48,16 @@ func main() {
 		log.Fatal("OWNER_ID is not set")
 	}
 
-	LoggerID, err = strconv.ParseInt(os.Getenv("LOGGER_ID"), 10, 64)
-	if err != nil {
-		log.Fatal("LOGGER_ID is not set")
+	// LOGGER_ID is optional — it seeds the log chat, which can be changed
+	// any time from the admin panel settings.
+	envLogChatID, logErr := strconv.ParseInt(strings.TrimSpace(os.Getenv("LOGGER_ID")), 10, 64)
+	if logErr != nil {
+		log.Println("LOGGER_ID not set/invalid — configure the log chat later via /admin → Settings")
+		envLogChatID = 0
 	}
 
-	// FSUB_IDS supports multiple comma-separated channel IDs (e.g. -100xxx,-100yyy)
+	// FSUB_IDS (comma-separated) seeds the force-join channels on first boot.
+	var envFsubIDs []int64
 	fsubEnv := strings.TrimSpace(os.Getenv("FSUB_IDS"))
 	for _, part := range strings.Split(fsubEnv, ",") {
 		part = strings.TrimSpace(part)
@@ -66,9 +66,10 @@ func main() {
 		}
 		id, err := strconv.ParseInt(part, 10, 64)
 		if err != nil {
-			log.Fatalf("invalid FSUB_IDS entry %q: %v", part, err)
+			log.Printf("skipping invalid FSUB_IDS entry %q: %v", part, err)
+			continue
 		}
-		FSubIds = append(FSubIds, id)
+		envFsubIDs = append(envFsubIDs, id)
 	}
 
 	MongoDBURI = os.Getenv("MONGO_URI")
@@ -95,6 +96,8 @@ func main() {
 	db := client.Database("premiumcard")
 	userColl = db.Collection("users")
 	cardColl = db.Collection("codes")
+	settingsColl = db.Collection("settings")
+	loadConfig(envLogChatID, envFsubIDs)
 
 	bot, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
@@ -154,6 +157,25 @@ func main() {
 		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.addcodes"), adminAddCardsStart)},
 		map[string][]ext.Handler{
 			admStateAddCards: {handlers.NewMessage(anyText, adminAddCardsMessage)},
+		},
+		&handlers.ConversationOpts{
+			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
+			StateStorage: conversation.NewInMemoryStorage(conversation.KeyStrategySenderAndChat),
+			AllowReEntry: true,
+		},
+	))
+
+	// Admin panel settings conversations (log chat / force-join add / referral target)
+	dispatcher.AddHandler(handlers.NewConversation(
+		[]ext.Handler{
+			handlers.NewCallback(callbackquery.Prefix("admc.logset"), adminLogSetStart),
+			handlers.NewCallback(callbackquery.Prefix("admc.fsubadd"), adminFsubAddStart),
+			handlers.NewCallback(callbackquery.Prefix("admc.target"), adminTargetStart),
+		},
+		map[string][]ext.Handler{
+			admStateLogSet:  {handlers.NewMessage(anyText, adminLogSetMessage)},
+			admStateFsubAdd: {handlers.NewMessage(anyText, adminFsubAddMessage)},
+			admStateTarget:  {handlers.NewMessage(anyText, adminTargetMessage)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -593,6 +615,14 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	if ClaimsPaused {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "⏸️ Claims are temporarily paused. Please try again later!",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
 	// Re-verify channel membership at claim time
 	isMember, err := fSub(b, user.Id, "")
 	if err != nil {
@@ -654,9 +684,9 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err := markUserClaimed(user.Id, card.Card); err != nil {
 		// The card is already assigned; alert the admin instead of failing the user
 		log.Printf("CRITICAL: user %d claimed card %s but HasClaimed flag update failed: %v", user.Id, card.ID.Hex(), err)
-		_, _ = b.SendMessage(LoggerID, fmt.Sprintf(
+		notifyLogChat(b, fmt.Sprintf(
 			"⚠️ User <code>%d</code> claimed card %s but flag update failed. Please verify manually.",
-			user.Id, card.ID.Hex()), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			user.Id, card.ID.Hex()))
 	}
 
 	stockLeft, _ := countAvailableCards()
@@ -683,10 +713,9 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 			},
 		})
 
-	_, _ = b.SendMessage(LoggerID, fmt.Sprintf(
+	notifyLogChat(b, fmt.Sprintf(
 		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Card ID: <code>%s</code>\n📦 Stock left: <b>%d</b>",
-		esc(user.FirstName), user.Id, card.ID.Hex(), stockLeft),
-		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		esc(user.FirstName), user.Id, card.ID.Hex(), stockLeft))
 
 	return nil
 }

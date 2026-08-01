@@ -56,17 +56,24 @@ func fetchInviteLink(b *gotgbot.Bot, chatID int64) (string, error) {
 	return chat.InviteLink, nil
 }
 
+// cacheInviteLink stores an invite link for a chat in the local cache.
+func cacheInviteLink(chatID int64, link string) {
+	chatCacheMutex.Lock()
+	chatInviteLinks[chatID] = link
+	chatCacheMutex.Unlock()
+}
+
 // fSub checks whether the user is a member of ALL configured force-join
 // channels. If not, it sends one message listing join buttons for every
 // missing channel plus a "Try again" button, and returns false.
 func fSub(b *gotgbot.Bot, userId int64, arg string) (bool, error) {
-	if len(FSubIds) == 0 {
-		log.Print("FSub IDs not set — skipping force-join check")
+	channels := getFsubChannels()
+	if len(channels) == 0 {
 		return true, nil
 	}
 
 	var buttons [][]gotgbot.InlineKeyboardButton
-	for i, chatID := range FSubIds {
+	for i, chatID := range channels {
 		status := ""
 		userMember, err := b.GetChatMember(chatID, userId, nil)
 		if err != nil {

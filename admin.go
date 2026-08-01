@@ -15,6 +15,9 @@ import (
 const (
 	admStateFindUser = "ADM_FIND_USER"
 	admStateAddCards = "ADM_ADD_CODES"
+	admStateFsubAdd  = "ADM_FSUB_ADD"
+	admStateLogSet   = "ADM_LOG_SET"
+	admStateTarget   = "ADM_TARGET"
 )
 
 const admTimeFmt = "02 Jan 06 15:04"
@@ -55,7 +58,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{admBtn("📊 Dashboard", "admp.dash")},
 			{admBtn("👥 Users", "admp.users"), admBtn("🎟️ Cards", "admp.codes")},
-			{admBtn("📢 Broadcast", "admp.bcast")},
+			{admBtn("🛠 Settings", "admp.settings"), admBtn("📢 Broadcast", "admp.bcast")},
 			{admBtn("❌ Close Panel", "admp.close")},
 		},
 	}
@@ -72,6 +75,81 @@ func admEdit(b *gotgbot.Bot, msg *gotgbot.Message, text string, kb gotgbot.Inlin
 	}
 }
 
+// ---------- Settings views ----------
+
+func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
+	chans := getFsubChannels()
+	fsum := "<i>none — open access</i>"
+	if len(chans) > 0 {
+		var sb strings.Builder
+		for i, c := range chans {
+			fmt.Fprintf(&sb, "%d. <code>%d</code>\n", i+1, c)
+		}
+		fsum = strings.TrimRight(sb.String(), "\n")
+	}
+
+	logStr := "<i>not set</i>"
+	if id := getLogChat(); id != 0 {
+		logStr = fmt.Sprintf("<code>%d</code>", id)
+	}
+
+	claimStr := "🟢 Open"
+	toggleLabel := "⏸️ Pause Claims"
+	if ClaimsPaused {
+		claimStr = "⏸️ Paused"
+		toggleLabel = "▶️ Resume Claims"
+	}
+
+	text := fmt.Sprintf(
+		"🛠 <b>Bot Settings</b>\n\n"+
+			"📢 <b>Force-join channels:</b>\n%s\n\n"+
+			"🪵 <b>Log chat:</b> %s\n"+
+			"🎯 <b>Referral target:</b> <b>%d</b>\n"+
+			"🎁 <b>Claims:</b> %s\n\n"+
+			"<i>Changes apply instantly and persist across restarts.</i>",
+		fsum, logStr, ReferralTarget, claimStr)
+
+	kb := gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{admBtn("📢 Force-Join Setup", "admp.fsub")},
+			{admBtn("🪵 Set Log Chat", "admc.logset")},
+			{admBtn("🎯 Referral Target", "admc.target"), admBtn(toggleLabel, "admp.claimstoggle")},
+			admBackBtn(),
+		},
+	}
+	return text, kb
+}
+
+func admFsubView() (string, gotgbot.InlineKeyboardMarkup) {
+	chans := getFsubChannels()
+
+	var sb strings.Builder
+	sb.WriteString("📢 <b>Force-Join Setup</b>\n\n")
+	if len(chans) == 0 {
+		sb.WriteString("<i>No channels set — anyone can use the bot without joining.</i>\n")
+	} else {
+		sb.WriteString("Users must join <b>ALL</b> of these:\n\n")
+		for i, c := range chans {
+			fmt.Fprintf(&sb, "%d. <code>%d</code>\n", i+1, c)
+		}
+	}
+	sb.WriteString("\n<i>The bot must be admin in each channel (invite permission).</i>")
+
+	rows := [][]gotgbot.InlineKeyboardButton{}
+	for _, c := range chans {
+		rows = append(rows, []gotgbot.InlineKeyboardButton{
+			admBtn(fmt.Sprintf("❌ Remove %d", c), fmt.Sprintf("admp.fsubdel.%d", c)),
+		})
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("➕ Add Channel", "admc.fsubadd")})
+	if len(chans) > 0 {
+		rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("🧹 Clear All", "admp.fsubclear")})
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("🔙 Settings", "admp.settings")})
+
+	return sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
 // ---------- Panel router (admp.*) ----------
 
 func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -86,7 +164,68 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	switch strings.TrimPrefix(query.Data, "admp.") {
+	action := strings.TrimPrefix(query.Data, "admp.")
+
+	// Force-join channel removal carries an ID: admp.fsubdel.<id>
+	if idStr, ok := strings.CutPrefix(action, "fsubdel."); ok {
+		chatID := stringToInt64(idStr)
+		removed, err := removeFsubChannel(chatID)
+		if err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		if !removed {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "⚠️ Channel not in the list.", ShowAlert: true})
+			return nil
+		}
+		log.Printf("admin removed force-join channel %d", chatID)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "❌ Channel removed."})
+		text, kb := admFsubView()
+		admEdit(b, msg, text, kb)
+		return nil
+	}
+
+	switch action {
+	case "settings":
+		_, _ = query.Answer(b, nil)
+		text, kb := admSettingsView()
+		admEdit(b, msg, text, kb)
+
+	case "fsub":
+		_, _ = query.Answer(b, nil)
+		text, kb := admFsubView()
+		admEdit(b, msg, text, kb)
+
+	case "fsubclear":
+		if err := clearFsubChannels(); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		log.Printf("admin cleared all force-join channels")
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "🧹 Cleared — bot is now open access.", ShowAlert: true})
+		text, kb := admFsubView()
+		admEdit(b, msg, text, kb)
+
+	case "claimstoggle":
+		newState := !ClaimsPaused
+		if err := setClaimsPaused(newState); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		label := "▶️ Claims resumed."
+		if newState {
+			label = "⏸️ Claims paused — users can't claim until resumed."
+		}
+		log.Printf("admin toggled claims: paused=%v", newState)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: label, ShowAlert: newState})
+		text, kb := admSettingsView()
+		admEdit(b, msg, text, kb)
+
 	case "home":
 		_, _ = query.Answer(b, nil)
 		admEdit(b, msg, admPanelText(), admPanelKeyboard())
@@ -551,5 +690,177 @@ func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func adminCancel(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, _ = ctx.EffectiveMessage.Reply(b, "❌ Cancelled. Open the panel anytime with /admin", nil)
+	return handlers.EndConversation()
+}
+
+// ---------- Conversations: bot settings ----------
+
+func admSettingsBackBtn() gotgbot.InlineKeyboardMarkup {
+	return gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{admBtn("🛠 Settings", "admp.settings")},
+		},
+	}
+}
+
+// adminLogSetStart asks the owner for the log chat ID.
+func adminLogSetStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isOwner(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Owner only.", ShowAlert: true})
+		return handlers.EndConversation()
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b,
+		"🪵 <b>Set Log Chat</b>\n\n"+
+			"Send the chat ID where claim notifications should go — a channel/group (<code>-100...</code>) or your own user ID.\n\n"+
+			"<i>The bot must be able to message that chat (member/admin).</i>\n\n"+
+			"/cancel to abort.",
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateLogSet)
+}
+
+func adminLogSetMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isOwner(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	chatID := stringToInt64(strings.TrimSpace(msg.GetText()))
+	if chatID == 0 {
+		_, _ = msg.Reply(b, "❌ Invalid chat ID. Send a numeric chat ID, or /cancel.", nil)
+		return nil
+	}
+
+	// Verify the bot can reach the chat before saving
+	if _, err := b.GetChat(chatID, nil); err != nil {
+		_, _ = msg.Reply(b,
+			"❌ I can't access that chat. Add me there first (member or admin), then send the ID again — or /cancel.",
+			nil)
+		return nil
+	}
+
+	if err := setLogChat(chatID); err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+
+	log.Printf("admin set log chat to %d", chatID)
+	_, _ = msg.Reply(b, fmt.Sprintf(
+		"✅ <b>Log chat set!</b>\n\nClaim notifications will now go to <code>%d</code>.", chatID),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+	return handlers.EndConversation()
+}
+
+// adminFsubAddStart asks the owner for a force-join channel ID.
+func adminFsubAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isOwner(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Owner only.", ShowAlert: true})
+		return handlers.EndConversation()
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b,
+		"📢 <b>Add Force-Join Channel</b>\n\n"+
+			"Send the channel ID (e.g. <code>-1001234567890</code>).\n\n"+
+			"<i>The bot must be an <b>admin</b> in the channel with invite permission, otherwise users can't join it.</i>\n\n"+
+			"/cancel to abort.",
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateFsubAdd)
+}
+
+func adminFsubAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isOwner(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	chatID := stringToInt64(strings.TrimSpace(msg.GetText()))
+	if chatID >= 0 {
+		_, _ = msg.Reply(b, "❌ Invalid channel ID. Channels/groups have negative IDs like <code>-1001234567890</code>.\n\nTry again, or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	chat, err := b.GetChat(chatID, nil)
+	if err != nil {
+		_, _ = msg.Reply(b,
+			"❌ I can't access that chat. Make me an <b>admin</b> in the channel first, then send the ID again — or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	added, err := addFsubChannel(chatID)
+	if err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+	if !added {
+		_, _ = msg.Reply(b, "⚠️ That channel is already in the force-join list.",
+			&gotgbot.SendMessageOpts{ReplyMarkup: admSettingsBackBtn()})
+		return handlers.EndConversation()
+	}
+
+	// Warm the invite-link cache; create one if the channel has none
+	linkStatus := "✅ Invite link ready."
+	link, lerr := fetchInviteLink(b, chatID)
+	if lerr != nil || link == "" {
+		if inv, cerr := b.CreateChatInviteLink(chatID, nil); cerr == nil && inv != nil && inv.InviteLink != "" {
+			cacheInviteLink(chatID, inv.InviteLink)
+		} else {
+			linkStatus = "⚠️ Couldn't get/create an invite link — check my admin invite permission, or users won't be able to join!"
+		}
+	}
+
+	log.Printf("admin added force-join channel %d (%s)", chatID, chat.Title)
+	_, _ = msg.Reply(b, fmt.Sprintf(
+		"✅ <b>Channel added to force-join!</b>\n\n📢 %s\n🆔 <code>%d</code>\n%s",
+		esc(chat.Title), chatID, linkStatus),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+	return handlers.EndConversation()
+}
+
+// adminTargetStart asks the owner for the referral target.
+func adminTargetStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isOwner(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Owner only.", ShowAlert: true})
+		return handlers.EndConversation()
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+		"🎯 <b>Referral Target</b>\n\nSend the number of friends a user must refer to unlock a reward.\n\nCurrent: <b>%d</b>\n\n/cancel to abort.",
+		ReferralTarget),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateTarget)
+}
+
+func adminTargetMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isOwner(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	n := int(stringToInt64(strings.TrimSpace(msg.GetText())))
+	if n < 1 || n > 10000 {
+		_, _ = msg.Reply(b, "❌ Send a number between 1 and 10000, or /cancel.", nil)
+		return nil
+	}
+
+	if err := setReferralTarget(n); err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+
+	log.Printf("admin set referral target to %d", n)
+	_, _ = msg.Reply(b, fmt.Sprintf(
+		"✅ <b>Referral target updated!</b>\n\nUsers now need <b>%d</b> referrals to claim a reward.", n),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
 	return handlers.EndConversation()
 }

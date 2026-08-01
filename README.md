@@ -21,6 +21,11 @@
   - 📊 **Dashboard** — users / banned / claimed / stock at a glance
   - 👥 **User management** — search any user, newest users list, **ban/unban**, **reset claim**, **delete user** (auto-unlinks from referrer)
   - 🎟️ **Card stock** — bulk add with duplicate-skip, recent claims history, purge claimed records
+  - 🛠 **Live settings** (persisted in MongoDB, no restart needed):
+    - 📢 **Force-join setup** — add/remove/clear channels from the panel, bot verifies admin access and prepares invite links automatically
+    - 🪵 **Log chat setup** — point claim notifications at any chat the bot can reach
+    - 🎯 **Referral target** — change the required referrals anytime
+    - ⏸️ **Claims pause/resume** — one tap, e.g. while restocking
   - 📢 **Broadcast** hub
 - **Quick owner commands** — `/addcard`, `/stock`, `/stats`, `/broadcast` also work standalone.
 - **Duplicate-safe imports** — `/addcard` skips empty lines, in-batch duplicates and cards already in the DB.
@@ -59,16 +64,16 @@
 cp sample.env .env
 ```
 
-| Variable | Description |
-|---|---|
-| `TOKEN` | Bot token from BotFather |
-| `OWNER_ID` | Your Telegram user ID (admin commands) |
-| `LOGGER_ID` | Chat ID where claim notifications go |
-| `FSUB_IDS` | Comma-separated channel IDs, e.g. `-100111,-100222` |
-| `MONGO_URI` | MongoDB connection string |
-| `SECRET_TOKEN`, `WEBHOOK_URL`, `PORT` | Optional — webhook mode (defaults to long-polling) |
+| Variable | Required | Description |
+|---|---|---|
+| `TOKEN` | ✅ | Bot token from BotFather |
+| `OWNER_ID` | ✅ | Your Telegram user ID (admin access) |
+| `MONGO_URI` | ✅ | MongoDB connection string |
+| `LOGGER_ID` | ➖ | Seeds the log chat on first boot — change later via `/admin` → Settings |
+| `FSUB_IDS` | ➖ | Seeds force-join channels (comma-separated) on first boot — manage later via `/admin` → Settings |
+| `SECRET_TOKEN`, `WEBHOOK_URL`, `PORT` | ➖ | Webhook mode (defaults to long-polling) |
 
-The referral target (default **5**) and brand name are constants at the top of `main.go`.
+> ⚙️ All runtime settings (**force-join channels, log chat, referral target, claims pause**) live in MongoDB and are managed from the **admin panel** — env vars are only used as first-boot seeds.
 
 ### Docker (recommended)
 
