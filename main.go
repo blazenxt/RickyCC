@@ -13,6 +13,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -130,6 +131,36 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("claim"), claim))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("home"), home))
 
+	// Admin panel
+	dispatcher.AddHandler(handlers.NewCommand("admin", adminCmd))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("admp."), adminCallback))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("admu."), adminUserCallback))
+
+	// Admin panel conversations (find user / add codes)
+	dispatcher.AddHandler(handlers.NewConversation(
+		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.finduser"), adminFindUserStart)},
+		map[string][]ext.Handler{
+			admStateFindUser: {handlers.NewMessage(anyText, adminFindUserMessage)},
+		},
+		&handlers.ConversationOpts{
+			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
+			StateStorage: conversation.NewInMemoryStorage(conversation.KeyStrategySenderAndChat),
+			AllowReEntry: true,
+		},
+	))
+
+	dispatcher.AddHandler(handlers.NewConversation(
+		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.addcodes"), adminAddCodesStart)},
+		map[string][]ext.Handler{
+			admStateAddCodes: {handlers.NewMessage(anyText, adminAddCodesMessage)},
+		},
+		&handlers.ConversationOpts{
+			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
+			StateStorage: conversation.NewInMemoryStorage(conversation.KeyStrategySenderAndChat),
+			AllowReEntry: true,
+		},
+	))
+
 	updater := ext.NewUpdater(dispatcher, nil)
 
 	if WebhookURL != "" && Port != "" {
@@ -239,7 +270,7 @@ func welcomeText(firstName string, u *User, isNew bool) string {
 	text := fmt.Sprintf(
 		"%s to %s, %s!</b>\n\n"+
 			"👥 <b>Referrals:</b> %d/%d  %s\n\n",
-		greeting, BrandName, firstName, done, ReferralTarget, progressBar(done, ReferralTarget))
+		greeting, BrandName, esc(firstName), done, ReferralTarget, progressBar(done, ReferralTarget))
 
 	if done >= ReferralTarget {
 		if u.HasClaimed {
@@ -282,6 +313,11 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if existingUser != nil {
+		if existingUser.Banned {
+			_, _ = msg.Reply(b, "🚫 You are banned from using this bot.", nil)
+			return nil
+		}
+		updateUserProfile(user.Id, user.FirstName, user.Username)
 		_, _ = msg.Reply(b, welcomeText(user.FirstName, existingUser, false), &gotgbot.SendMessageOpts{
 			ReplyMarkup: mainKeyboard(b, user.Id),
 			ParseMode:   "HTML",
@@ -293,6 +329,12 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// ---- New user registration ----
+	newUser := User{
+		ID:       user.Id,
+		Name:     user.FirstName,
+		Username: user.Username,
+	}
+
 	var referrerID int64
 	if len(args) > 0 {
 		referrerID, err = strconv.ParseInt(strings.TrimSpace(args[0]), 10, 64)
@@ -310,7 +352,7 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 
-		if err := referUser(referrerID, user.Id); err != nil {
+		if err := referUser(referrerID, newUser); err != nil {
 			log.Printf("Failed to refer user: %v", err)
 			_, _ = msg.Reply(b, "⚠️ <b>Failed to register with the referral. Please try again.</b>", &gotgbot.SendMessageOpts{
 				ParseMode: "HTML",
@@ -325,18 +367,18 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 			if doneCount >= ReferralTarget {
 				notify = fmt.Sprintf(
 					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d/%d</b> %s\n\n🏆 <b>Target complete!</b> Open the bot and tap 🎁 Claim Reward!",
-					user.FirstName, doneCount, ReferralTarget, progressBar(doneCount, ReferralTarget))
+					esc(user.FirstName), doneCount, ReferralTarget, progressBar(doneCount, ReferralTarget))
 			} else {
 				notify = fmt.Sprintf(
 					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d/%d</b> %s\n🔗 <b>%d more</b> to unlock your reward!",
-					user.FirstName, doneCount, ReferralTarget, progressBar(doneCount, ReferralTarget), ReferralTarget-doneCount)
+					esc(user.FirstName), doneCount, ReferralTarget, progressBar(doneCount, ReferralTarget), ReferralTarget-doneCount)
 			}
 			_, _ = b.SendMessage(referrerID, notify, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		}
 	}
 
 	if referrerID == 0 {
-		if err := addUser(User{ID: user.Id, Referrer: 0}); err != nil {
+		if err := addUser(newUser); err != nil {
 			log.Printf("Failed to add user: %v", err)
 			_, _ = msg.Reply(b, "❌ <b>Failed to register. Please try again later.</b>", &gotgbot.SendMessageOpts{
 				ParseMode: "HTML",
@@ -376,6 +418,7 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 /info - ℹ️ Your account details
 
 <b>🔸 Owner Commands</b>
+/admin - ⚙️ Open the full admin panel
 /addcode - ➕ Add reward codes (one per line, or reply to a list)
 /stock - 📦 Check reward stock
 /stats - 📊 Bot statistics
@@ -541,6 +584,14 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	if u.Banned {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "🚫 You are banned from using this bot.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
 	// Re-verify channel membership at claim time
 	isMember, err := fSub(b, user.Id, "")
 	if err != nil {
@@ -618,7 +669,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 			"Here is your <b>Premium Card</b>:\n\n"+
 			"<code>%s</code>\n\n"+
 			"⚠️ <i>Keep it private. Tap 📊 My Progress if you need to see it again.</i>",
-		user.FirstName, code.Code),
+		esc(user.FirstName), code.Code),
 		&gotgbot.EditMessageTextOpts{
 			ParseMode: "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
@@ -633,7 +684,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	_, _ = b.SendMessage(LoggerID, fmt.Sprintf(
 		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Code ID: <code>%s</code>\n📦 Stock left: <b>%d</b>",
-		user.FirstName, user.Id, code.ID.Hex(), stockLeft),
+		esc(user.FirstName), user.Id, code.ID.Hex(), stockLeft),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 
 	return nil

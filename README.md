@@ -17,7 +17,12 @@
 - **Referral tracking with progress bar** — users see `X/5` progress everywhere and get a milestone ping on every successful referral.
 - **Atomic reward claims** — `FindOneAndUpdate` guarantees one code per code, one claim per user; stock runs out gracefully ("come back soon").
 - **Privacy hardened** — users can only view their own info/progress (owner exempt).
-- **Owner tools** — bulk code import, stock counter, stats, broadcast.
+- **Full admin panel (`/admin`)** — interactive inline-keyboard UI:
+  - 📊 **Dashboard** — users / banned / claimed / stock at a glance
+  - 👥 **User management** — search any user, newest users list, **ban/unban**, **reset claim**, **delete user** (auto-unlinks from referrer)
+  - 🎟️ **Code stock** — bulk add with duplicate-skip, recent claims history, purge claimed records
+  - 📢 **Broadcast** hub
+- **Quick owner commands** — `/addcode`, `/stock`, `/stats`, `/broadcast` also work standalone.
 - **Duplicate-safe imports** — `/addcode` skips empty lines, in-batch duplicates and codes already in the DB.
 
 ---
@@ -30,10 +35,12 @@
 - `/info` — view your account details (self only).
 
 ### Owner only
+- `/admin` — open the full admin panel (dashboard, user management, code stock, broadcast).
 - `/addcode` — add reward codes. Paste codes after the command (**one per line**) or **reply** to a message containing the list.
 - `/stock` — view available / claimed code counts.
 - `/stats` — total users, claimed users, code inventory.
 - `/broadcast` — reply to any message to send it to all users.
+- `/cancel` — abort an active panel input (find-user / add-codes).
 
 ---
 

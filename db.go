@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -13,13 +14,15 @@ import (
 
 // User represents the structure of a user document in MongoDB
 type User struct {
-	ID            int64   `bson:"_id,omitempty" json:"_id,omitempty"`
-	Referrer      int64   `bson:"referrer,omitempty" json:"referrer,omitempty"`
-	ReferredUsers []int64 `bson:"referred_users,omitempty" json:"referred_users,omitempty"`
-	AccNo         int64   `bson:"acc_no,omitempty" json:"acc_no,omitempty"`
-	Balance       float64 `bson:"balance,omitempty" json:"balance,omitempty"`
-	HasClaimed    bool    `bson:"has_claimed,omitempty" json:"has_claimed,omitempty"`
-	ClaimedCode   string  `bson:"claimed_code,omitempty" json:"claimed_code,omitempty"`
+	ID            int64     `bson:"_id,omitempty" json:"_id,omitempty"`
+	Name          string    `bson:"name,omitempty" json:"name,omitempty"`
+	Username      string    `bson:"username,omitempty" json:"username,omitempty"`
+	Referrer      int64     `bson:"referrer,omitempty" json:"referrer,omitempty"`
+	ReferredUsers []int64   `bson:"referred_users,omitempty" json:"referred_users,omitempty"`
+	JoinedAt      time.Time `bson:"joined_at,omitempty" json:"joined_at,omitempty"`
+	Banned        bool      `bson:"banned,omitempty" json:"banned,omitempty"`
+	HasClaimed    bool      `bson:"has_claimed,omitempty" json:"has_claimed,omitempty"`
+	ClaimedCode   string    `bson:"claimed_code,omitempty" json:"claimed_code,omitempty"`
 }
 
 // Code statuses
@@ -53,6 +56,10 @@ func addUser(user User) error {
 		return fmt.Errorf("user with ID %d already exists", user.ID)
 	}
 
+	if user.JoinedAt.IsZero() {
+		user.JoinedAt = time.Now()
+	}
+
 	_, err = userColl.InsertOne(ctx, user)
 	if err != nil {
 		return fmt.Errorf("failed to add user: %v", err)
@@ -61,7 +68,9 @@ func addUser(user User) error {
 	return nil
 }
 
-func referUser(referrerID, newUserID int64) error {
+// referUser registers newUser under referrerID and links them in the
+// referrer's referred_users list.
+func referUser(referrerID int64, newUser User) error {
 	// Check if referrer exists
 	referrer := User{}
 	err := userColl.FindOne(ctx, bson.M{"_id": referrerID}).Decode(&referrer)
@@ -69,17 +78,13 @@ func referUser(referrerID, newUserID int64) error {
 		return fmt.Errorf("referrer with ID %d does not exist", referrerID)
 	}
 
-	newUser := User{
-		ID:       newUserID,
-		Referrer: referrerID,
-	}
-
+	newUser.Referrer = referrerID
 	err = addUser(newUser)
 	if err != nil {
 		return err
 	}
 
-	_, err = userColl.UpdateOne(ctx, bson.M{"_id": referrerID}, bson.M{"$push": bson.M{"referred_users": newUserID}})
+	_, err = userColl.UpdateOne(ctx, bson.M{"_id": referrerID}, bson.M{"$push": bson.M{"referred_users": newUser.ID}})
 	if err != nil {
 		return fmt.Errorf("failed to update referrer's referred users: %v", err)
 	}
@@ -93,6 +98,17 @@ func getUser(userID int64) (*User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+// updateUserProfile refreshes the stored name/username (best effort).
+func updateUserProfile(userID int64, name, username string) {
+	_, err := userColl.UpdateOne(ctx,
+		bson.M{"_id": userID},
+		bson.M{"$set": bson.M{"name": name, "username": username}},
+	)
+	if err != nil {
+		log.Printf("failed to update profile for user %d: %v", userID, err)
+	}
 }
 
 func markUserClaimed(userID int64, code string) error {
@@ -110,6 +126,14 @@ func countClaimedUsers() (int64, error) {
 	return userColl.CountDocuments(ctx, bson.M{"has_claimed": true})
 }
 
+func countAllUsers() (int64, error) {
+	return userColl.CountDocuments(ctx, bson.M{})
+}
+
+func countBannedUsers() (int64, error) {
+	return userColl.CountDocuments(ctx, bson.M{"banned": true})
+}
+
 func getAllUsers() ([]User, error) {
 	cursor, err := userColl.Find(ctx, bson.M{})
 	if err != nil {
@@ -122,6 +146,80 @@ func getAllUsers() ([]User, error) {
 		return nil, fmt.Errorf("failed to decode users: %v", err)
 	}
 	return users, nil
+}
+
+// getRecentUsers returns the newest users (by join date), capped at limit.
+func getRecentUsers(limit int64) ([]User, error) {
+	opts := options.Find().SetSort(bson.M{"joined_at": -1}).SetLimit(limit)
+	cursor, err := userColl.Find(ctx, bson.M{}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve recent users: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var users []User
+	if err = cursor.All(ctx, &users); err != nil {
+		return nil, fmt.Errorf("failed to decode users: %v", err)
+	}
+	return users, nil
+}
+
+// ---------- Admin user actions ----------
+
+func setUserBanned(userID int64, banned bool) error {
+	res, err := userColl.UpdateOne(ctx,
+		bson.M{"_id": userID},
+		bson.M{"$set": bson.M{"banned": banned}},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update ban status for user %d: %v", userID, err)
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("user with ID %d does not exist", userID)
+	}
+	return nil
+}
+
+// resetUserClaim clears a user's claim so they can claim a new reward.
+func resetUserClaim(userID int64) error {
+	res, err := userColl.UpdateOne(ctx,
+		bson.M{"_id": userID},
+		bson.M{"$unset": bson.M{"has_claimed": "", "claimed_code": ""}},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to reset claim for user %d: %v", userID, err)
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("user with ID %d does not exist", userID)
+	}
+	return nil
+}
+
+// deleteUser removes a user document and unlinks them from their referrer.
+func deleteUser(userID int64) error {
+	u, err := getUser(userID)
+	if err != nil {
+		return fmt.Errorf("user with ID %d does not exist", userID)
+	}
+
+	if u.Referrer > 0 {
+		_, err := userColl.UpdateOne(ctx,
+			bson.M{"_id": u.Referrer},
+			bson.M{"$pull": bson.M{"referred_users": userID}},
+		)
+		if err != nil {
+			log.Printf("failed to unlink user %d from referrer %d: %v", userID, u.Referrer, err)
+		}
+	}
+
+	res, err := userColl.DeleteOne(ctx, bson.M{"_id": userID})
+	if err != nil {
+		return fmt.Errorf("failed to delete user %d: %v", userID, err)
+	}
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("user with ID %d does not exist", userID)
+	}
+	return nil
 }
 
 // ---------- Reward code stock ----------
@@ -209,4 +307,29 @@ func claimCodeAtomic(userID int64) (*Code, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// getRecentClaims returns the latest claimed codes (most recent first).
+func getRecentClaims(limit int64) ([]Code, error) {
+	opts := options.Find().SetSort(bson.M{"claimed_at": -1}).SetLimit(limit)
+	cursor, err := codeColl.Find(ctx, bson.M{"status": CodeClaimed}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve claims: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var codes []Code
+	if err = cursor.All(ctx, &codes); err != nil {
+		return nil, fmt.Errorf("failed to decode claims: %v", err)
+	}
+	return codes, nil
+}
+
+// clearClaimedCodes permanently deletes all claimed code records.
+func clearClaimedCodes() (int64, error) {
+	res, err := codeColl.DeleteMany(ctx, bson.M{"status": CodeClaimed})
+	if err != nil {
+		return 0, fmt.Errorf("failed to clear claimed codes: %v", err)
+	}
+	return res.DeletedCount, nil
 }
