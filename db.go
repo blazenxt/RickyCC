@@ -30,12 +30,12 @@ const (
 
 // Card represents a reward card in the stock
 type Card struct {
-	ID         int64
-	Card       string
-	Status     string
-	CreatedAt  time.Time
-	ClaimedBy  int64
-	ClaimedAt  *time.Time
+	ID        int64
+	Card      string
+	Status    string
+	CreatedAt time.Time
+	ClaimedBy int64
+	ClaimedAt *time.Time
 }
 
 // errNoStock is returned by claimCardAtomic when the stock is empty.
@@ -69,9 +69,18 @@ CREATE TABLE IF NOT EXISTS settings (
     fsub_channels   TEXT    NOT NULL DEFAULT '[]',
     referral_target INTEGER NOT NULL DEFAULT 5,
     claims_paused   INTEGER NOT NULL DEFAULT 0,
-    admin_ids       TEXT    NOT NULL DEFAULT '[]'
+    admin_ids       TEXT    NOT NULL DEFAULT '[]',
+    support_url     TEXT    NOT NULL DEFAULT '',
+    howto_text      TEXT    NOT NULL DEFAULT ''
 );
 `
+
+// settingsMigrations adds newer settings columns to databases created by
+// older builds. Errors (duplicate column) are expected and ignored.
+var settingsMigrations = []string{
+	`ALTER TABLE settings ADD COLUMN support_url TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE settings ADD COLUMN howto_text TEXT NOT NULL DEFAULT ''`,
+}
 
 // initDB opens (creating if needed) the local SQLite database and ensures the schema.
 func initDB(path string) error {
@@ -90,6 +99,9 @@ func initDB(path string) error {
 
 	if _, err = db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to initialise schema: %v", err)
+	}
+	for _, m := range settingsMigrations {
+		_, _ = db.Exec(m) // duplicate-column errors are expected, ignored
 	}
 	return nil
 }
@@ -439,12 +451,12 @@ func claimCardAtomic(userID int64) (*Card, error) {
 
 	t := time.Unix(now, 0)
 	return &Card{
-		ID:         cardID,
-		Card:       code,
-		Status:     CardClaimed,
-		CreatedAt:  time.Unix(created, 0),
-		ClaimedBy:  userID,
-		ClaimedAt:  &t,
+		ID:        cardID,
+		Card:      code,
+		Status:    CardClaimed,
+		CreatedAt: time.Unix(created, 0),
+		ClaimedBy: userID,
+		ClaimedAt: &t,
 	}, nil
 }
 

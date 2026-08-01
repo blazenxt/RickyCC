@@ -181,8 +181,31 @@ func TestSettings(t *testing.T) {
 	if err := setClaimsPaused(true); err != nil || !ClaimsPaused {
 		t.Fatal("claims pause broken")
 	}
+
+	// Support link + how-to text
+	if err := setSupportURL("https://t.me/SupportExample"); err != nil {
+		t.Fatalf("setSupportURL: %v", err)
+	}
+	if err := setHowtoText("Redeem at example.com — one use only."); err != nil {
+		t.Fatalf("setHowtoText: %v", err)
+	}
+
 	loadConfig(0, nil)
 	if ReferralTarget != 10 || !ClaimsPaused {
 		t.Fatal("settings should persist across reloads")
+	}
+	if getSupportURL() != "https://t.me/SupportExample" {
+		t.Fatalf("support URL should persist, got %q", getSupportURL())
+	}
+	if getHowtoText() != "Redeem at example.com — one use only." {
+		t.Fatalf("how-to text should persist, got %q", getHowtoText())
+	}
+
+	// Clearing restores defaults
+	if err := setHowtoText(""); err != nil {
+		t.Fatalf("clear howto: %v", err)
+	}
+	if getHowtoText() != defaultHowto {
+		t.Fatal("clearing how-to should restore the default text")
 	}
 }

@@ -13,6 +13,9 @@
 
 ## Features
 
+- **Branded reward delivery** — claimed cards are delivered as a photo caption on the bundled **Code-Stride** graphic (embedded in the binary, uploaded to Telegram once then reused via file_id): card, validity, and your how-to-use text.
+  - 🆘 **Support button** under every delivery — link set from the panel (`https://t.me/...` or `off`)
+  - 📖 **How-to-use text** — fully editable from the panel (`default` restores)
 - **Multi-channel force subscribe** — comma-separated channel list, one join prompt listing every missing channel, referral payload survives the "Try again" flow.
 - **Referral tracking with progress bar** — users see `X/5` progress everywhere and get a milestone ping on every successful referral.
 - **Atomic reward claims** — `FindOneAndUpdate` guarantees one card per card, one claim per user; stock runs out gracefully ("come back soon").
@@ -26,6 +29,8 @@
     - 📢 **Force-join setup** — add/remove/clear multiple channels from the panel, bot verifies admin access and prepares invite links automatically
     - 🪵 **Log chat setup** — point claim notifications at any chat the bot can reach
     - 🎯 **Referral target** — change the required referrals anytime
+    - 🆘 **Support link** for the reward-delivery button
+    - 📖 **How-to-use text** shown under delivered cards
     - ⏸️ **Claims pause/resume** — one tap, e.g. while restocking
   - 👑 **Multi-admin** — the owner grants full panel access to extra admins right from the panel (new admins get notified); only the owner (`OWNER_ID`) can add/remove them
   - 📢 **Broadcast** hub

@@ -155,19 +155,23 @@ func main() {
 		},
 	))
 
-	// Admin panel settings conversations (log chat / force-join add / referral target / admin add)
+	// Admin panel settings conversations (log chat / force-join add / referral target / admin add / support link / howto text)
 	dispatcher.AddHandler(handlers.NewConversation(
 		[]ext.Handler{
 			handlers.NewCallback(callbackquery.Prefix("admc.logset"), adminLogSetStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.fsubadd"), adminFsubAddStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.target"), adminTargetStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.adminadd"), adminAdminAddStart),
+			handlers.NewCallback(callbackquery.Prefix("admc.support"), adminSupportStart),
+			handlers.NewCallback(callbackquery.Prefix("admc.howto"), adminHowtoStart),
 		},
 		map[string][]ext.Handler{
 			admStateLogSet:   {handlers.NewMessage(anyText, adminLogSetMessage)},
 			admStateFsubAdd:  {handlers.NewMessage(anyText, adminFsubAddMessage)},
 			admStateTarget:   {handlers.NewMessage(anyText, adminTargetMessage)},
 			admStateAdminAdd: {handlers.NewMessage(anyText, adminAdminAddMessage)},
+			admStateSupport:  {handlers.NewMessage(anyText, adminSupportMessage)},
+			admStateHowto:    {handlers.NewMessage(anyText, adminHowtoMessage)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -687,22 +691,47 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		Text: "🎉 Reward unlocked!",
 	})
 
-	_, _, _ = msg.EditText(b, fmt.Sprintf(
+	// Deliver the card as a branded photo with caption
+	caption := fmt.Sprintf(
 		"🎉 <b>Congratulations, %s!</b>\n\n"+
-			"Here is your <b>Premium Card</b>:\n\n"+
-			"<code>%s</code>\n\n"+
-			"⚠️ <i>Keep it private. Tap 📊 My Progress if you need to see it again.</i>",
-		esc(user.FirstName), card.Card),
+			"💳 <b>Card:</b> <code>%s</code>\n"+
+			"⏳ <b>Validity:</b> One-time USE only\n\n"+
+			"📖 <b>How to use:</b>\n%s",
+		esc(user.FirstName), esc(card.Card), esc(getHowtoText()))
+
+	claimButtons := [][]gotgbot.InlineKeyboardButton{}
+	if u := getSupportURL(); u != "" {
+		claimButtons = append(claimButtons, []gotgbot.InlineKeyboardButton{
+			{Text: "🆘 Support", Url: u},
+		})
+	}
+	claimButtons = append(claimButtons, []gotgbot.InlineKeyboardButton{
+		{Text: "📊 My Progress", CallbackData: fmt.Sprintf("progress.%d", user.Id)},
+		{Text: "🏠 Home", CallbackData: "home"},
+	})
+	claimKeyboard := gotgbot.InlineKeyboardMarkup{InlineKeyboard: claimButtons}
+
+	sent, err := b.SendPhoto(user.Id, cardPhotoInput(), &gotgbot.SendPhotoOpts{
+		Caption:     caption,
+		ParseMode:   "HTML",
+		ReplyMarkup: claimKeyboard,
+	})
+	if err != nil {
+		// Fall back to plain text so the card still reaches the user
+		log.Printf("photo delivery failed for user %d: %v", user.Id, err)
+		_, _ = msg.Reply(b, caption, &gotgbot.SendMessageOpts{
+			ParseMode:   "HTML",
+			ReplyMarkup: claimKeyboard,
+		})
+	} else {
+		cacheCardImageID(sent)
+	}
+
+	_, _, _ = msg.EditText(b,
+		"🎁 <b>Reward sent above!</b> 👆\n\nKeep it private — tap 📊 My Progress anytime to view it again.",
 		&gotgbot.EditMessageTextOpts{
-			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-					{
-						{Text: "📊 My Progress", CallbackData: fmt.Sprintf("progress.%d", user.Id)},
-						{Text: "🏠 Home", CallbackData: "home"},
-					},
-				},
-			},
+			ParseMode:   "HTML",
+			ReplyMarkup: claimKeyboard,
 		})
 
 	notifyLogChat(b, fmt.Sprintf(

@@ -19,6 +19,8 @@ const (
 	admStateLogSet   = "ADM_LOG_SET"
 	admStateTarget   = "ADM_TARGET"
 	admStateAdminAdd = "ADM_ADMIN_ADD"
+	admStateSupport  = "ADM_SUPPORT"
+	admStateHowto    = "ADM_HOWTO"
 )
 
 const admTimeFmt = "02 Jan 06 15:04"
@@ -92,6 +94,11 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 		logStr = fmt.Sprintf("<code>%d</code>", id)
 	}
 
+	supportStr := "<i>not set — button hidden</i>"
+	if u := getSupportURL(); u != "" {
+		supportStr = fmt.Sprintf("<code>%s</code>", esc(u))
+	}
+
 	claimStr := "🟢 Open"
 	toggleLabel := "⏸️ Pause Claims"
 	if ClaimsPaused {
@@ -104,15 +111,18 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 			"📢 <b>Force-join channels:</b>\n%s\n\n"+
 			"🪵 <b>Log chat:</b> %s\n"+
 			"🎯 <b>Referral target:</b> <b>%d</b>\n"+
-			"🎁 <b>Claims:</b> %s\n\n"+
+			"🎁 <b>Claims:</b> %s\n"+
+			"🆘 <b>Support link:</b> %s\n"+
+			"📖 <b>How-to text:</b> <i>%s</i>\n\n"+
 			"<i>Changes apply instantly and persist across restarts.</i>",
-		fsum, logStr, ReferralTarget, claimStr)
+		fsum, logStr, ReferralTarget, claimStr, supportStr, esc(truncate(getHowtoText(), 60)))
 
 	kb := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{admBtn("📢 Force-Join Setup", "admp.fsub")},
 			{admBtn("🪵 Set Log Chat", "admc.logset")},
 			{admBtn("🎯 Referral Target", "admc.target"), admBtn(toggleLabel, "admp.claimstoggle")},
+			{admBtn("🆘 Support Link", "admc.support"), admBtn("📖 How-to Text", "admc.howto")},
 			admBackBtn(),
 		},
 	}
@@ -982,12 +992,134 @@ func adminAdminAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 		adminID),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
 
-	// Let the new admin know
-	if _, err := b.SendMessage(adminID,
-		fmt.Sprintf("👑 <b>You are now an admin of %s!</b>\n\nOpen /admin to manage the bot.", BrandName),
-		&gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-		log.Printf("could not notify new admin %d: %v", adminID, err)
+	return handlers.EndConversation()
+}
+
+// adminSupportStart asks for the URL behind the 🆘 Support button.
+func adminSupportStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isAdmin(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Admins only.", ShowAlert: true})
+		return handlers.EndConversation()
 	}
 
+	current := getSupportURL()
+	if current == "" {
+		current = "<i>not set — button hidden</i>"
+	} else {
+		current = "<code>" + esc(current) + "</code>"
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+		"🆘 <b>Support Link</b>\n\n"+
+			"Send the link for the Support button shown with delivered cards — e.g. <code>https://t.me/YourSupport</code>.\n\n"+
+			"Current: %s\n\n"+
+			"Send <code>off</code> to hide the button.\n/cancel to abort.",
+		current),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateSupport)
+}
+
+func adminSupportMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isAdmin(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	raw := strings.TrimSpace(msg.GetText())
+
+	if strings.EqualFold(raw, "off") || strings.EqualFold(raw, "none") {
+		if err := setSupportURL(""); err != nil {
+			_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+			return handlers.EndConversation()
+		}
+		log.Printf("admin hid the support button")
+		_, _ = msg.Reply(b, "✅ <b>Support button hidden.</b>",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+		return handlers.EndConversation()
+	}
+
+	// Normalise shorthand: t.me/foo → https://t.me/foo ; @foo → https://t.me/foo
+	url := raw
+	if strings.HasPrefix(url, "@") {
+		url = "https://t.me/" + strings.TrimPrefix(url, "@")
+	} else if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "https://" + url
+	}
+	if !(strings.HasPrefix(url, "https://t.me/") || strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://")) ||
+		len(url) > 200 || strings.ContainsAny(url, " \n\t\"'<>") {
+		_, _ = msg.Reply(b, "❌ That doesn't look like a valid link. Send an https or t.me link, <code>off</code>, or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	if err := setSupportURL(url); err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+
+	log.Printf("admin set support link to %s", url)
+	_, _ = msg.Reply(b, fmt.Sprintf(
+		"✅ <b>Support link updated!</b>\n\n🆘 Button now points to: <code>%s</code>", url),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+	return handlers.EndConversation()
+}
+
+// adminHowtoStart asks for the how-to-use text shown under delivered cards.
+func adminHowtoStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isAdmin(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Admins only.", ShowAlert: true})
+		return handlers.EndConversation()
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+		"📖 <b>How-to-Use Text</b>\n\n"+
+			"Send the instructions shown under every delivered card (plain text, up to 700 characters).\n\n"+
+			"<b>Current:</b>\n<i>%s</i>\n\n"+
+			"Send <code>default</code> to restore the built-in text.\n/cancel to abort.",
+		esc(truncate(getHowtoText(), 300))),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateHowto)
+}
+
+func adminHowtoMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isAdmin(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	raw := strings.TrimSpace(msg.GetText())
+
+	if strings.EqualFold(raw, "default") {
+		if err := setHowtoText(""); err != nil {
+			_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+			return handlers.EndConversation()
+		}
+		log.Printf("admin restored default how-to text")
+		_, _ = msg.Reply(b, "✅ <b>Default how-to text restored.</b>",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+		return handlers.EndConversation()
+	}
+
+	runes := []rune(raw)
+	if len(runes) < 5 || len(runes) > 700 {
+		_, _ = msg.Reply(b, "❌ Keep it between 5 and 700 characters. Try again, send <code>default</code>, or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	if err := setHowtoText(raw); err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+
+	log.Printf("admin updated how-to text (%d chars)", len(runes))
+	_, _ = msg.Reply(b, "✅ <b>How-to text updated!</b>\n\nNew cards will show it under the card details.",
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
 	return handlers.EndConversation()
 }

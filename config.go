@@ -22,7 +22,13 @@ var (
 	logChatID    int64
 	fsubChannels []int64
 	adminIDs     []int64
+	supportURL   string
+	howtoText    string
 )
+
+// defaultHowto is shown under delivered cards until an admin sets custom text.
+const defaultHowto = "Copy the card and redeem it right away. " +
+	"Each card works only once — do not share it with anyone."
 
 // loadConfig loads settings from the database, seeding them from env/defaults
 // on first boot, and applies them to the runtime globals.
@@ -39,12 +45,12 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 		log.Printf("config: failed to seed settings: %v", err)
 	}
 
-	var fsubRaw, adminsRaw string
+	var fsubRaw, adminsRaw, support, howto string
 	var target, paused int
 	var logID int64
 	err = db.QueryRow(
-		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids FROM settings WHERE id = 1",
-	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw)
+		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text FROM settings WHERE id = 1",
+	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto)
 	if err != nil {
 		log.Printf("config: failed to read settings: %v", err)
 		return
@@ -58,6 +64,8 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	logChatID = logID
 	fsubChannels = fsubs
 	adminIDs = admins
+	supportURL = support
+	howtoText = howto
 	cfgMu.Unlock()
 
 	if target > 0 {
@@ -165,6 +173,46 @@ func setClaimsPaused(paused bool) error {
 		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	ClaimsPaused = paused
+	return nil
+}
+
+// ---------- Support link & how-to text ----------
+
+func getSupportURL() string {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return supportURL
+}
+
+// setSupportURL sets the URL behind the 🆘 Support button ("" hides it).
+func setSupportURL(url string) error {
+	if _, err := db.Exec("UPDATE settings SET support_url = ? WHERE id = 1", url); err != nil {
+		return fmt.Errorf("failed to save support link: %v", err)
+	}
+	cfgMu.Lock()
+	supportURL = url
+	cfgMu.Unlock()
+	return nil
+}
+
+// getHowtoText returns the how-to-use text shown under delivered cards.
+func getHowtoText() string {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	if howtoText == "" {
+		return defaultHowto
+	}
+	return howtoText
+}
+
+// setHowtoText stores the how-to-use text ("" restores the default).
+func setHowtoText(text string) error {
+	if _, err := db.Exec("UPDATE settings SET howto_text = ? WHERE id = 1", text); err != nil {
+		return fmt.Errorf("failed to save how-to text: %v", err)
+	}
+	cfgMu.Lock()
+	howtoText = text
+	cfgMu.Unlock()
 	return nil
 }
 
