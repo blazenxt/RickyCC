@@ -15,6 +15,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
@@ -84,6 +85,7 @@ func main() {
 	fmt.Println("Connected to MongoDB")
 	db := client.Database("tgreferearn")
 	userColl = db.Collection("users")
+	withdrawalColl = db.Collection("withdrawals")
 
 	bot, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
@@ -119,6 +121,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("info"), infoCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("wallet"), walletCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("confirm_withdrawal"), confirmWithdrawal))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("reject_withdrawal"), rejectWithdrawal))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("home"), home))
 
 	dispatcher.AddHandler(handlers.NewConversation(
@@ -400,6 +403,12 @@ func info(b *gotgbot.Bot, ctx *ext.Context) error {
 		userId = stringToInt64(args[0])
 	}
 
+	// Users may only view their own info; the owner may view anyone's
+	if userId != user.Id && user.Id != OwnerID {
+		_, _ = msg.Reply(b, "❌ You are not authorized to view other users' info.", nil)
+		return nil
+	}
+
 	userInfo, err := getUser(userId)
 	if err != nil {
 		_, _ = msg.Reply(b, "❌ <b>User not found.</b>\n\nPlease check the User ID and try again.", &gotgbot.SendMessageOpts{
@@ -438,6 +447,15 @@ func infoCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	userId := stringToInt64(splitData[1])
+
+	// Users may only view their own info; the owner may view anyone's
+	if query.From.Id != userId && query.From.Id != OwnerID {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ This is not your info.",
+			ShowAlert: true,
+		})
+		return nil
+	}
 
 	userInfo, err := getUser(userId)
 	if err != nil {
@@ -933,32 +951,57 @@ func withdrawalAsk(b *gotgbot.Bot, ctx *ext.Context) error {
 		return handlers.NextConversationState(WITHDRAWAL)
 	}
 
-	// Remove balance from user account
+	// Deduct the balance now; it is refunded if the request cannot be recorded,
+	// submitted, or if the owner later rejects it.
 	_, err = removeBalance(msg.From.Id, amount)
 	if err != nil {
 		_, _ = msg.Reply(b, "❌ Failed to process your withdrawal request. "+err.Error(), nil)
 		return handlers.EndConversation()
 	}
 
-	// Send confirmation button
+	// Record the request in the database for a proper audit trail
+	wd := Withdrawal{
+		UserID:    user.Id,
+		Amount:    amount,
+		AccNo:     userInfo.AccNo,
+		Status:    WithdrawalPending,
+		CreatedAt: time.Now(),
+	}
+	wdID, err := createWithdrawal(wd)
+	if err != nil {
+		_ = updateUserBalance(user.Id, amount) // refund
+		log.Printf("failed to record withdrawal for user %d: %v", user.Id, err)
+		_, _ = msg.Reply(b, "❌ Failed to record your withdrawal request. Your balance has been restored, please try again later.", nil)
+		return handlers.EndConversation()
+	}
+
+	// Confirm / Reject buttons keyed by the withdrawal's database ID
 	button := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{
 				{
 					Text:         "✅ Confirm Withdrawal",
-					CallbackData: fmt.Sprintf("confirm_withdrawal.%d.%f", user.Id, amount),
+					CallbackData: "confirm_withdrawal." + wdID.Hex(),
+				},
+				{
+					Text:         "❌ Reject & Refund",
+					CallbackData: "reject_withdrawal." + wdID.Hex(),
 				},
 			},
 		},
 	}
 
 	// Log the withdrawal request
-	loggerMsg := fmt.Sprintf("💰 <b>%s</b> requested a withdrawal of %.2f\n\nUser AccNo: <code>%d</code>", user.FirstName, amount, userInfo.AccNo)
+	loggerMsg := fmt.Sprintf(
+		"💰 <b>%s</b> requested a withdrawal of %.2f\n\nUser ID: <code>%d</code>\nUser AccNo: <code>%d</code>\nRequest ID: <code>%s</code>",
+		user.FirstName, amount, user.Id, userInfo.AccNo, wdID.Hex())
 
 	// Send to logger
 	_, err = b.SendMessage(LoggerID, loggerMsg, &gotgbot.SendMessageOpts{ReplyMarkup: button, ParseMode: "html"})
 	if err != nil {
-		_, _ = msg.Reply(b, "❌ Failed to send withdrawal request to the logger. "+CustomError(err).Error(), nil)
+		_ = setWithdrawalStatus(wdID, WithdrawalRejected, 0)
+		_ = updateUserBalance(user.Id, amount) // refund
+		_, _ = msg.Reply(b, "❌ Failed to send the withdrawal request. Your balance has been restored, please try again later.", nil)
 		return handlers.EndConversation()
 	}
 
@@ -972,8 +1015,17 @@ func confirmWithdrawal(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.Update.CallbackQuery
 	data := query.Data
 
+	// Only the owner may approve withdrawal requests
+	if query.From.Id != OwnerID {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ Only the bot owner can approve withdrawals.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
 	splitData := strings.Split(data, ".")
-	if len(splitData) < 3 {
+	if len(splitData) < 2 {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ Invalid callback data.",
 			ShowAlert: true,
@@ -981,29 +1033,48 @@ func confirmWithdrawal(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	userID, err := strconv.ParseInt(splitData[1], 10, 64)
+	wdID, err := primitive.ObjectIDFromHex(splitData[1])
 	if err != nil {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text:      "❌ Invalid user ID.",
+			Text:      "❌ Invalid request ID.",
 			ShowAlert: true,
 		})
 		return nil
 	}
 
-	amount, err := strconv.ParseFloat(splitData[2], 64)
+	wd, err := getWithdrawal(wdID)
 	if err != nil {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text:      "❌ Invalid amount.",
+			Text:      "❌ Withdrawal request not found.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	if wd.Status != WithdrawalPending {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      fmt.Sprintf("⚠️ This request was already %s.", wd.Status),
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	if err := setWithdrawalStatus(wdID, WithdrawalApproved, query.From.Id); err != nil {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ " + CustomError(err).Error(),
 			ShowAlert: true,
 		})
 		return nil
 	}
 
 	_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: "✅ Processing withdrawal request...",
+		Text: "✅ Withdrawal approved.",
 	})
 
-	_, _, _ = msg.EditText(b, fmt.Sprintf("✅ Done! Amount of %.2f successfully withdrawn.", amount), nil)
+	_, _, _ = msg.EditText(b, fmt.Sprintf(
+		"✅ <b>Approved.</b> Amount %.2f → user <code>%d</code> (AccNo <code>%d</code>)\nRequest ID: <code>%s</code>",
+		wd.Amount, wd.UserID, wd.AccNo, wdID.Hex()),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 
 	text := fmt.Sprintf(`🎉 Withdrawal Approved! 🎉
 
@@ -1011,11 +1082,108 @@ func confirmWithdrawal(b *gotgbot.Bot, ctx *ext.Context) error {
 
 💸 Amount: %.2f
 
-Thank you for trusting us! 🚀`, amount)
+Thank you for trusting us! 🚀`, wd.Amount)
 
-	_, err = b.SendMessage(userID, text, nil)
+	_, err = b.SendMessage(wd.UserID, text, nil)
 	if err != nil {
-		_, _ = msg.Reply(b, "❌ Failed to send the approved withdrawal message. "+CustomError(err).Error(), nil)
+		_, _ = msg.Reply(b, "⚠️ Withdrawal approved, but failed to notify the user. "+CustomError(err).Error(), nil)
+	}
+
+	return nil
+}
+
+func rejectWithdrawal(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	query := ctx.Update.CallbackQuery
+	data := query.Data
+
+	// Only the owner may reject withdrawal requests
+	if query.From.Id != OwnerID {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ Only the bot owner can reject withdrawals.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	splitData := strings.Split(data, ".")
+	if len(splitData) < 2 {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ Invalid callback data.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	wdID, err := primitive.ObjectIDFromHex(splitData[1])
+	if err != nil {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ Invalid request ID.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	wd, err := getWithdrawal(wdID)
+	if err != nil {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ Withdrawal request not found.",
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	if wd.Status != WithdrawalPending {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      fmt.Sprintf("⚠️ This request was already %s.", wd.Status),
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	if err := setWithdrawalStatus(wdID, WithdrawalRejected, query.From.Id); err != nil {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ " + CustomError(err).Error(),
+			ShowAlert: true,
+		})
+		return nil
+	}
+
+	// Refund the deducted amount back to the user's balance
+	refundFailed := false
+	if err := updateUserBalance(wd.UserID, wd.Amount); err != nil {
+		refundFailed = true
+		log.Printf("CRITICAL: refund failed for withdrawal %s (user %d, amount %.2f): %v", wdID.Hex(), wd.UserID, wd.Amount, err)
+		_, _ = msg.Reply(b, fmt.Sprintf(
+			"⚠️ Request marked rejected but the refund FAILED. Refund manually:\n<code>/add %d %s</code>",
+			wd.UserID, strconv.FormatFloat(wd.Amount, 'f', 2, 64)),
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	}
+
+	answerText := "❌ Withdrawal rejected & refunded."
+	if refundFailed {
+		answerText = "⚠️ Rejected, but refund failed — check chat."
+	}
+	_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+		Text:      answerText,
+		ShowAlert: refundFailed,
+	})
+
+	_, _, _ = msg.EditText(b, fmt.Sprintf(
+		"❌ <b>Rejected%s.</b> Amount %.2f → user <code>%d</code>\nRequest ID: <code>%s</code>",
+		map[bool]string{true: " (refund failed)", false: " & refunded"}[refundFailed],
+		wd.Amount, wd.UserID, wdID.Hex()),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+
+	userText := fmt.Sprintf(
+		"❌ Your withdrawal request of %.2f was rejected. The amount has been refunded to your balance.", wd.Amount)
+	if refundFailed {
+		userText = fmt.Sprintf(
+			"❌ Your withdrawal request of %.2f was rejected. Please contact support regarding your refund.", wd.Amount)
+	}
+	_, err = b.SendMessage(wd.UserID, userText, nil)
+	if err != nil {
+		_, _ = msg.Reply(b, "⚠️ Withdrawal rejected, but failed to notify the user. "+CustomError(err).Error(), nil)
 	}
 
 	return nil
@@ -1062,7 +1230,11 @@ func home(b *gotgbot.Bot, ctx *ext.Context) error {
 		Text: "🔙 Back to Main Menu",
 	})
 
-	existingUser, _ := getUser(user.Id)
+	existingUser, err := getUser(user.Id)
+	if err != nil || existingUser == nil {
+		// User has never started the bot — don't crash, show an empty profile
+		existingUser = &User{ID: user.Id}
+	}
 	response := fmt.Sprintf(
 		"👋 <b>Welcome back, %s!</b>\n\n"+
 			"💰 <b>Balance:</b> %.2f\n"+

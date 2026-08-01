@@ -50,7 +50,7 @@
 1. Clone the repository: `git clone https://github.com/AshokShau/earnify.git && cd earnify`
 2. Set up the environment: `cp sample.env .env`
 3. Build the Docker image: `docker build -t earnify .`
-4. Run the Docker container: `docker run -p 8080:8080 -d earnify`
+4. Run the Docker container: `docker run --env-file .env -p 8080:8080 -d earnify`
 
 ---
 

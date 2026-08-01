@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -17,7 +19,29 @@ type User struct {
 	Balance       float64 `bson:"balance,omitempty" json:"balance,omitempty"`
 }
 
-var userColl *mongo.Collection
+// Withdrawal statuses
+const (
+	WithdrawalPending  = "pending"
+	WithdrawalApproved = "approved"
+	WithdrawalRejected = "rejected"
+)
+
+// Withdrawal represents a withdrawal request record in MongoDB
+type Withdrawal struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID    int64              `bson:"user_id" json:"user_id"`
+	Amount    float64            `bson:"amount" json:"amount"`
+	AccNo     int64              `bson:"acc_no" json:"acc_no"`
+	Status    string             `bson:"status" json:"status"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	HandledBy int64              `bson:"handled_by,omitempty" json:"handled_by,omitempty"`
+	HandledAt *time.Time         `bson:"handled_at,omitempty" json:"handled_at,omitempty"`
+}
+
+var (
+	userColl       *mongo.Collection
+	withdrawalColl *mongo.Collection
+)
 
 func addUser(user User) error {
 	filter := bson.M{"$or": []bson.M{
@@ -155,4 +179,44 @@ func getAllUsers() ([]User, error) {
 		return nil, fmt.Errorf("failed to decode users: %v", err)
 	}
 	return users, nil
+}
+
+// createWithdrawal stores a new withdrawal request and returns its ID
+func createWithdrawal(w Withdrawal) (primitive.ObjectID, error) {
+	res, err := withdrawalColl.InsertOne(ctx, w)
+	if err != nil {
+		return primitive.NilObjectID, fmt.Errorf("failed to create withdrawal: %v", err)
+	}
+	oid, ok := res.InsertedID.(primitive.ObjectID)
+	if !ok {
+		return primitive.NilObjectID, fmt.Errorf("failed to parse withdrawal ID")
+	}
+	return oid, nil
+}
+
+// getWithdrawal fetches a withdrawal request by its ID
+func getWithdrawal(id primitive.ObjectID) (*Withdrawal, error) {
+	w := Withdrawal{}
+	err := withdrawalColl.FindOne(ctx, bson.M{"_id": id}).Decode(&w)
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// setWithdrawalStatus marks a pending withdrawal as approved/rejected.
+// The pending-status filter makes the operation safe against double-clicks.
+func setWithdrawalStatus(id primitive.ObjectID, status string, handledBy int64) error {
+	now := time.Now()
+	res, err := withdrawalColl.UpdateOne(ctx,
+		bson.M{"_id": id, "status": WithdrawalPending},
+		bson.M{"$set": bson.M{"status": status, "handled_by": handledBy, "handled_at": now}},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update withdrawal status: %v", err)
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("withdrawal not found or already processed")
+	}
+	return nil
 }
