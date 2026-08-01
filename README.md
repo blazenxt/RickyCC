@@ -4,10 +4,10 @@
 
 1. **Force-join** — users must join your channels (supports **2+ channels**) before they can use the bot.
 2. **Refer** — each user gets a personal referral link and must refer **5 friends** (each friend also has to pass the channel check to count).
-3. **Unlock** — after completing the target, the user taps **🎁 Claim Reward** and instantly receives **one reward code** from the stock.
-4. **You stock the rewards** — the owner adds codes with `/addcode`, and the bot hands out **exactly one per user**, atomically, so no code is ever given twice.
+3. **Unlock** — after completing the target, the user taps **🎁 Claim Reward** and instantly receives **one reward card** from the stock.
+4. **You stock the rewards** — the owner adds cards with `/addcard`, and the bot hands out **exactly one per user**, atomically, so no card is ever given twice.
 
-> ⚠️ Only distribute codes you are legally allowed to share (gift cards, vouchers, promo codes, etc.). The authors take no responsibility for misuse.
+> ⚠️ Only distribute cards you are legally allowed to share (gift cards, vouchers, promo codes, etc.). The authors take no responsibility for misuse.
 
 ---
 
@@ -15,15 +15,15 @@
 
 - **Multi-channel force subscribe** — comma-separated channel list, one join prompt listing every missing channel, referral payload survives the "Try again" flow.
 - **Referral tracking with progress bar** — users see `X/5` progress everywhere and get a milestone ping on every successful referral.
-- **Atomic reward claims** — `FindOneAndUpdate` guarantees one code per code, one claim per user; stock runs out gracefully ("come back soon").
+- **Atomic reward claims** — `FindOneAndUpdate` guarantees one card per card, one claim per user; stock runs out gracefully ("come back soon").
 - **Privacy hardened** — users can only view their own info/progress (owner exempt).
 - **Full admin panel (`/admin`)** — interactive inline-keyboard UI:
   - 📊 **Dashboard** — users / banned / claimed / stock at a glance
   - 👥 **User management** — search any user, newest users list, **ban/unban**, **reset claim**, **delete user** (auto-unlinks from referrer)
-  - 🎟️ **Code stock** — bulk add with duplicate-skip, recent claims history, purge claimed records
+  - 🎟️ **Card stock** — bulk add with duplicate-skip, recent claims history, purge claimed records
   - 📢 **Broadcast** hub
-- **Quick owner commands** — `/addcode`, `/stock`, `/stats`, `/broadcast` also work standalone.
-- **Duplicate-safe imports** — `/addcode` skips empty lines, in-batch duplicates and codes already in the DB.
+- **Quick owner commands** — `/addcard`, `/stock`, `/stats`, `/broadcast` also work standalone.
+- **Duplicate-safe imports** — `/addcard` skips empty lines, in-batch duplicates and cards already in the DB.
 
 ---
 
@@ -35,12 +35,12 @@
 - `/info` — view your account details (self only).
 
 ### Owner only
-- `/admin` — open the full admin panel (dashboard, user management, code stock, broadcast).
-- `/addcode` — add reward codes. Paste codes after the command (**one per line**) or **reply** to a message containing the list.
-- `/stock` — view available / claimed code counts.
-- `/stats` — total users, claimed users, code inventory.
+- `/admin` — open the full admin panel (dashboard, user management, card stock, broadcast).
+- `/addcard` — add reward cards. Paste cards after the command (**one per line**) or **reply** to a message containing the list.
+- `/stock` — view available / claimed card counts.
+- `/stats` — total users, claimed users, card inventory.
 - `/broadcast` — reply to any message to send it to all users.
-- `/cancel` — abort an active panel input (find-user / add-codes).
+- `/cancel` — abort an active panel input (find-user / add-cards).
 
 ---
 
@@ -88,7 +88,7 @@ go build -o premiumcard .
 
 ## Data model (MongoDB)
 
-**`users`** — telegram ID, referrer, referred user IDs, claim status & claimed code.
+**`users`** — telegram ID, referrer, referred user IDs, claim status & claimed card.
 **`codes`** — code text, status (`available`/`claimed`), who claimed it and when.
 
 ---

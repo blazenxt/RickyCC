@@ -22,19 +22,19 @@ type User struct {
 	JoinedAt      time.Time `bson:"joined_at,omitempty" json:"joined_at,omitempty"`
 	Banned        bool      `bson:"banned,omitempty" json:"banned,omitempty"`
 	HasClaimed    bool      `bson:"has_claimed,omitempty" json:"has_claimed,omitempty"`
-	ClaimedCode   string    `bson:"claimed_code,omitempty" json:"claimed_code,omitempty"`
+	ClaimedCard   string    `bson:"claimed_code,omitempty" json:"claimed_code,omitempty"`
 }
 
-// Code statuses
+// Card statuses
 const (
-	CodeAvailable = "available"
-	CodeClaimed   = "claimed"
+	CardAvailable = "available"
+	CardClaimed   = "claimed"
 )
 
-// Code represents a reward code in the stock
-type Code struct {
+// Card represents a reward card in the stock
+type Card struct {
 	ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Code       string             `bson:"code" json:"code"`
+	Card       string             `bson:"code" json:"code"`
 	Status     string             `bson:"status" json:"status"`
 	CreatedAt  time.Time          `bson:"created_at" json:"created_at"`
 	ClaimedBy  int64              `bson:"claimed_by,omitempty" json:"claimed_by,omitempty"`
@@ -43,7 +43,7 @@ type Code struct {
 
 var (
 	userColl *mongo.Collection
-	codeColl *mongo.Collection
+	cardColl *mongo.Collection
 )
 
 func addUser(user User) error {
@@ -111,10 +111,10 @@ func updateUserProfile(userID int64, name, username string) {
 	}
 }
 
-func markUserClaimed(userID int64, code string) error {
+func markUserClaimed(userID int64, card string) error {
 	_, err := userColl.UpdateOne(ctx,
 		bson.M{"_id": userID},
-		bson.M{"$set": bson.M{"has_claimed": true, "claimed_code": code}},
+		bson.M{"$set": bson.M{"has_claimed": true, "claimed_code": card}},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to mark user %d as claimed: %v", userID, err)
@@ -222,12 +222,12 @@ func deleteUser(userID int64) error {
 	return nil
 }
 
-// ---------- Reward code stock ----------
+// ---------- Reward card stock ----------
 
-// addCodes inserts new codes into the stock, skipping empty lines,
-// in-batch duplicates, and codes that already exist in the database.
+// addCards inserts new cards into the stock, skipping empty lines,
+// in-batch duplicates, and cards that already exist in the database.
 // Returns (added, skipped, error).
-func addCodes(lines []string) (int, int, error) {
+func addCards(lines []string) (int, int, error) {
 	seen := map[string]bool{}
 	var fresh []string
 	for _, l := range lines {
@@ -239,24 +239,24 @@ func addCodes(lines []string) (int, int, error) {
 		fresh = append(fresh, l)
 	}
 	if len(fresh) == 0 {
-		return 0, 0, fmt.Errorf("no valid codes provided")
+		return 0, 0, fmt.Errorf("no valid cards provided")
 	}
 
-	// Find which of these codes already exist in the DB
-	cursor, err := codeColl.Find(ctx,
+	// Find which of these cards already exist in the DB
+	cursor, err := cardColl.Find(ctx,
 		bson.M{"code": bson.M{"$in": fresh}},
 		options.Find().SetProjection(bson.M{"code": 1}),
 	)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to check existing codes: %v", err)
+		return 0, 0, fmt.Errorf("failed to check existing cards: %v", err)
 	}
-	var existing []Code
+	var existing []Card
 	if err = cursor.All(ctx, &existing); err != nil {
 		return 0, 0, fmt.Errorf("failed to decode existing codes: %v", err)
 	}
 	dup := map[string]bool{}
 	for _, c := range existing {
-		dup[c.Code] = true
+		dup[c.Card] = true
 	}
 
 	now := time.Now()
@@ -265,7 +265,7 @@ func addCodes(lines []string) (int, int, error) {
 		if dup[c] {
 			continue
 		}
-		docs = append(docs, Code{Code: c, Status: CodeAvailable, CreatedAt: now})
+		docs = append(docs, Card{Card: c, Status: CardAvailable, CreatedAt: now})
 	}
 
 	skipped := len(fresh) - len(docs)
@@ -273,34 +273,34 @@ func addCodes(lines []string) (int, int, error) {
 		return 0, skipped, nil
 	}
 
-	res, err := codeColl.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
+	res, err := cardColl.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
 	if err != nil {
-		return 0, skipped, fmt.Errorf("failed to insert codes: %v", err)
+		return 0, skipped, fmt.Errorf("failed to insert cards: %v", err)
 	}
 	return len(res.InsertedIDs), skipped, nil
 }
 
-func countAvailableCodes() (int64, error) {
-	return codeColl.CountDocuments(ctx, bson.M{"status": CodeAvailable})
+func countAvailableCards() (int64, error) {
+	return cardColl.CountDocuments(ctx, bson.M{"status": CardAvailable})
 }
 
-func countClaimedCodes() (int64, error) {
-	return codeColl.CountDocuments(ctx, bson.M{"status": CodeClaimed})
+func countClaimedCards() (int64, error) {
+	return cardColl.CountDocuments(ctx, bson.M{"status": CardClaimed})
 }
 
-// claimCodeAtomic atomically marks the oldest available code as claimed by the
-// user, so concurrent claims can never hand out the same code twice.
+// claimCardAtomic atomically marks the oldest available card as claimed by the
+// user, so concurrent claims can never hand out the same card twice.
 // Returns mongo.ErrNoDocuments when the stock is empty.
-func claimCodeAtomic(userID int64) (*Code, error) {
+func claimCardAtomic(userID int64) (*Card, error) {
 	now := time.Now()
 	opts := options.FindOneAndUpdate().
 		SetReturnDocument(options.After).
 		SetSort(bson.M{"created_at": 1})
 
-	var c Code
-	err := codeColl.FindOneAndUpdate(ctx,
-		bson.M{"status": CodeAvailable},
-		bson.M{"$set": bson.M{"status": CodeClaimed, "claimed_by": userID, "claimed_at": now}},
+	var c Card
+	err := cardColl.FindOneAndUpdate(ctx,
+		bson.M{"status": CardAvailable},
+		bson.M{"$set": bson.M{"status": CardClaimed, "claimed_by": userID, "claimed_at": now}},
 		opts,
 	).Decode(&c)
 	if err != nil {
@@ -309,27 +309,27 @@ func claimCodeAtomic(userID int64) (*Code, error) {
 	return &c, nil
 }
 
-// getRecentClaims returns the latest claimed codes (most recent first).
-func getRecentClaims(limit int64) ([]Code, error) {
+// getRecentClaims returns the latest claimed cards (most recent first).
+func getRecentClaims(limit int64) ([]Card, error) {
 	opts := options.Find().SetSort(bson.M{"claimed_at": -1}).SetLimit(limit)
-	cursor, err := codeColl.Find(ctx, bson.M{"status": CodeClaimed}, opts)
+	cursor, err := cardColl.Find(ctx, bson.M{"status": CardClaimed}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve claims: %v", err)
 	}
 	defer cursor.Close(ctx)
 
-	var codes []Code
+	var codes []Card
 	if err = cursor.All(ctx, &codes); err != nil {
 		return nil, fmt.Errorf("failed to decode claims: %v", err)
 	}
 	return codes, nil
 }
 
-// clearClaimedCodes permanently deletes all claimed code records.
-func clearClaimedCodes() (int64, error) {
-	res, err := codeColl.DeleteMany(ctx, bson.M{"status": CodeClaimed})
+// clearClaimedCards permanently deletes all claimed card records.
+func clearClaimedCards() (int64, error) {
+	res, err := cardColl.DeleteMany(ctx, bson.M{"status": CardClaimed})
 	if err != nil {
-		return 0, fmt.Errorf("failed to clear claimed codes: %v", err)
+		return 0, fmt.Errorf("failed to clear claimed cards: %v", err)
 	}
 	return res.DeletedCount, nil
 }

@@ -14,7 +14,7 @@ import (
 // Conversation states for the admin panel
 const (
 	admStateFindUser = "ADM_FIND_USER"
-	admStateAddCodes = "ADM_ADD_CODES"
+	admStateAddCards = "ADM_ADD_CODES"
 )
 
 const admTimeFmt = "02 Jan 06 15:04"
@@ -54,7 +54,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 	return gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{admBtn("📊 Dashboard", "admp.dash")},
-			{admBtn("👥 Users", "admp.users"), admBtn("🎟️ Codes", "admp.codes")},
+			{admBtn("👥 Users", "admp.users"), admBtn("🎟️ Cards", "admp.codes")},
 			{admBtn("📢 Broadcast", "admp.bcast")},
 			{admBtn("❌ Close Panel", "admp.close")},
 		},
@@ -96,16 +96,16 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		total, _ := countAllUsers()
 		banned, _ := countBannedUsers()
 		claimedU, _ := countClaimedUsers()
-		avail, _ := countAvailableCodes()
-		claimedC, _ := countClaimedCodes()
+		avail, _ := countAvailableCards()
+		claimedC, _ := countClaimedCards()
 
 		admEdit(b, msg, fmt.Sprintf(
 			"📊 <b>Dashboard</b>\n\n"+
 				"👥 Total users: <b>%d</b>\n"+
 				"🚫 Banned: <b>%d</b>\n"+
 				"🎁 Users claimed: <b>%d</b>\n\n"+
-				"🎟️ Codes available: <b>%d</b>\n"+
-				"✅ Codes claimed: <b>%d</b>\n\n"+
+				"🎟️ Cards available: <b>%d</b>\n"+
+				"✅ Cards claimed: <b>%d</b>\n\n"+
 				"🕒 <i>Refreshed %s</i>",
 			total, banned, claimedU, avail, claimedC, time.Now().Format("15:04:05")),
 			gotgbot.InlineKeyboardMarkup{
@@ -172,19 +172,19 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		})
 
 	case "codes":
-		avail, _ := countAvailableCodes()
-		claimedC, _ := countClaimedCodes()
+		avail, _ := countAvailableCards()
+		claimedC, _ := countClaimedCards()
 		_, _ = query.Answer(b, nil)
 
 		admEdit(b, msg, fmt.Sprintf(
-			"🎟️ <b>Code Stock</b>\n\n"+
+			"🎟️ <b>Card Stock</b>\n\n"+
 				"✅ Available: <b>%d</b>\n"+
 				"🎁 Claimed: <b>%d</b>\n"+
 				"📦 Total: <b>%d</b>",
 			avail, claimedC, avail+claimedC),
 			gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-					{admBtn("➕ Add Codes", "admc.addcodes")},
+					{admBtn("➕ Add Cards", "admc.addcodes")},
 					{admBtn("🧾 Recent Claims", "admp.claims")},
 					{admBtn("🧹 Clear Claimed", "admp.clear")},
 					admBackBtn(),
@@ -201,7 +201,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		var sb strings.Builder
-		sb.WriteString("🧾 <b>Latest claimed codes</b>\n\n")
+		sb.WriteString("🧾 <b>Latest claimed cards</b>\n\n")
 		if len(claims) == 0 {
 			sb.WriteString("<i>Nothing claimed yet.</i>")
 		}
@@ -211,21 +211,21 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				when = c.ClaimedAt.Format(admTimeFmt)
 			}
 			fmt.Fprintf(&sb, "• <code>%s</code>\n  → <code>%d</code> · %s\n",
-				esc(truncate(c.Code, 30)), c.ClaimedBy, when)
+				esc(truncate(c.Card, 30)), c.ClaimedBy, when)
 		}
 
 		admEdit(b, msg, sb.String(), gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{admBtn("🔙 Codes", "admp.codes")},
+				{admBtn("🔙 Cards", "admp.codes")},
 			},
 		})
 
 	case "clear":
-		claimedC, _ := countClaimedCodes()
+		claimedC, _ := countClaimedCards()
 		_, _ = query.Answer(b, nil)
 		admEdit(b, msg, fmt.Sprintf(
-			"🧹 <b>Clear claimed codes?</b>\n\n"+
-				"This will permanently delete <b>%d</b> claimed code record(s).\n"+
+			"🧹 <b>Clear claimed cards?</b>\n\n"+
+				"This will permanently delete <b>%d</b> claimed card record(s).\n"+
 				"<i>Claim history will be lost.</i>",
 			claimedC),
 			gotgbot.InlineKeyboardMarkup{
@@ -236,19 +236,19 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			})
 
 	case "clearok":
-		deleted, err := clearClaimedCodes()
+		deleted, err := clearClaimedCards()
 		if err != nil {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
 			return nil
 		}
-		log.Printf("admin cleared %d claimed codes", deleted)
+		log.Printf("admin cleared %d claimed cards", deleted)
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text: fmt.Sprintf("🧹 Deleted %d record(s).", deleted)})
-		admEdit(b, msg, fmt.Sprintf("🧹 Deleted <b>%d</b> claimed code record(s).", deleted),
+		admEdit(b, msg, fmt.Sprintf("🧹 Deleted <b>%d</b> claimed card record(s).", deleted),
 			gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-					{admBtn("🔙 Codes", "admp.codes")},
+					{admBtn("🔙 Cards", "admp.codes")},
 				},
 			})
 
@@ -284,7 +284,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 	claim := "❌ Not claimed"
 	if u.HasClaimed {
-		claim = fmt.Sprintf("✅ Claimed:\n<code>%s</code>", esc(truncate(u.ClaimedCode, 50)))
+		claim = fmt.Sprintf("✅ Claimed:\n<code>%s</code>", esc(truncate(u.ClaimedCard, 50)))
 	}
 	status := "✅ Active"
 	if u.Banned {
@@ -451,7 +451,7 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-// ---------- Conversations: find user & add codes ----------
+// ---------- Conversations: find user & add cards ----------
 
 // adminFindUserStart is the entry point for the find-user conversation.
 func adminFindUserStart(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -497,8 +497,8 @@ func adminFindUserMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	return handlers.EndConversation()
 }
 
-// adminAddCodesStart is the entry point for the add-codes conversation.
-func adminAddCodesStart(b *gotgbot.Bot, ctx *ext.Context) error {
+// adminAddCardsStart is the entry point for the add-cards conversation.
+func adminAddCardsStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
 	if !isOwner(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
@@ -508,34 +508,34 @@ func adminAddCodesStart(b *gotgbot.Bot, ctx *ext.Context) error {
 		return handlers.EndConversation()
 	}
 
-	avail, _ := countAvailableCodes()
+	avail, _ := countAvailableCards()
 	_, _ = query.Answer(b, nil)
 	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
 		"➕ <b>Add Codes</b>\n\n"+
-			"Send the codes now — <b>one per line</b>. Duplicates are skipped automatically.\n\n"+
+			"Send the cards now — <b>one per line</b>. Duplicates are skipped automatically.\n\n"+
 			"📦 Current stock: <b>%d</b>\n\n"+
 			"/cancel to abort.",
 		avail),
 		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
-	return handlers.NextConversationState(admStateAddCodes)
+	return handlers.NextConversationState(admStateAddCards)
 }
 
-func adminAddCodesMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	if msg.From == nil || !isOwner(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 
-	added, skipped, err := addCodes(strings.Split(msg.GetText(), "\n"))
+	added, skipped, err := addCards(strings.Split(msg.GetText(), "\n"))
 	if err != nil {
-		_, _ = msg.Reply(b, "❌ Failed to add codes: "+CustomError(err).Error(), nil)
+		_, _ = msg.Reply(b, "❌ Failed to add cards: "+CustomError(err).Error(), nil)
 		return handlers.EndConversation()
 	}
 
-	log.Printf("admin added %d codes (%d skipped)", added, skipped)
-	total, _ := countAvailableCodes()
+	log.Printf("admin added %d cards (%d skipped)", added, skipped)
+	total, _ := countAvailableCards()
 	_, _ = msg.Reply(b, fmt.Sprintf(
-		"✅ <b>Added %d code(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
+		"✅ <b>Added %d card(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
 		added, skipped, total),
 		&gotgbot.SendMessageOpts{
 			ParseMode: "HTML",

@@ -26,7 +26,7 @@ func CustomError(err error) error {
 
 var htmlReplacer = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
-// esc escapes user-provided text (names, codes, ...) for safe inclusion in
+// esc escapes user-provided text (names, cards, ...) for safe inclusion in
 // HTML parse-mode messages.
 func esc(s string) string { return htmlReplacer.Replace(s) }
 

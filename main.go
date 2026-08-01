@@ -94,7 +94,7 @@ func main() {
 	fmt.Println("Connected to MongoDB")
 	db := client.Database("premiumcard")
 	userColl = db.Collection("users")
-	codeColl = db.Collection("codes")
+	cardColl = db.Collection("codes")
 
 	bot, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
@@ -122,7 +122,8 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCommand("help", help))
 	dispatcher.AddHandler(handlers.NewCommand("progress", progressCmd))
 	dispatcher.AddHandler(handlers.NewCommand("info", info))
-	dispatcher.AddHandler(handlers.NewCommand("addcode", addCode))
+	dispatcher.AddHandler(handlers.NewCommand("addcard", addCard))
+	dispatcher.AddHandler(handlers.NewCommand("addcode", addCard)) // legacy alias
 	dispatcher.AddHandler(handlers.NewCommand("stock", stock))
 	dispatcher.AddHandler(handlers.NewCommand("stats", stats))
 	dispatcher.AddHandler(handlers.NewCommand("broadcast", broadcast))
@@ -136,7 +137,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("admp."), adminCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("admu."), adminUserCallback))
 
-	// Admin panel conversations (find user / add codes)
+	// Admin panel conversations (find user / add cards)
 	dispatcher.AddHandler(handlers.NewConversation(
 		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.finduser"), adminFindUserStart)},
 		map[string][]ext.Handler{
@@ -150,9 +151,9 @@ func main() {
 	))
 
 	dispatcher.AddHandler(handlers.NewConversation(
-		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.addcodes"), adminAddCodesStart)},
+		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.addcodes"), adminAddCardsStart)},
 		map[string][]ext.Handler{
-			admStateAddCodes: {handlers.NewMessage(anyText, adminAddCodesMessage)},
+			admStateAddCards: {handlers.NewMessage(anyText, adminAddCardsMessage)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -419,7 +420,7 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 
 <b>🔸 Owner Commands</b>
 /admin - ⚙️ Open the full admin panel
-/addcode - ➕ Add reward codes (one per line, or reply to a list)
+/addcard - ➕ Add reward cards (one per line, or reply to a list)
 /stock - 📦 Check reward stock
 /stats - 📊 Bot statistics
 /broadcast - 📢 Broadcast a message to all users
@@ -615,7 +616,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 			ShowAlert: true,
 		})
 		_, _, _ = msg.EditText(b, fmt.Sprintf(
-			"🎁 <b>Your reward:</b>\n\n<code>%s</code>", u.ClaimedCode),
+			"🎁 <b>Your reward:</b>\n\n<code>%s</code>", u.ClaimedCard),
 			&gotgbot.EditMessageTextOpts{
 				ParseMode:   "HTML",
 				ReplyMarkup: homeKeyboard(),
@@ -633,7 +634,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Atomic claim — safe against double-taps and concurrent requests
-	code, err := claimCodeAtomic(user.Id)
+	card, err := claimCardAtomic(user.Id)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
@@ -650,15 +651,15 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	if err := markUserClaimed(user.Id, code.Code); err != nil {
-		// The code is already assigned; alert the admin instead of failing the user
-		log.Printf("CRITICAL: user %d claimed code %s but HasClaimed flag update failed: %v", user.Id, code.ID.Hex(), err)
+	if err := markUserClaimed(user.Id, card.Card); err != nil {
+		// The card is already assigned; alert the admin instead of failing the user
+		log.Printf("CRITICAL: user %d claimed card %s but HasClaimed flag update failed: %v", user.Id, card.ID.Hex(), err)
 		_, _ = b.SendMessage(LoggerID, fmt.Sprintf(
-			"⚠️ User <code>%d</code> claimed code %s but flag update failed. Please verify manually.",
-			user.Id, code.ID.Hex()), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			"⚠️ User <code>%d</code> claimed card %s but flag update failed. Please verify manually.",
+			user.Id, card.ID.Hex()), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	}
 
-	stockLeft, _ := countAvailableCodes()
+	stockLeft, _ := countAvailableCards()
 
 	_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 		Text: "🎉 Reward unlocked!",
@@ -669,7 +670,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 			"Here is your <b>Premium Card</b>:\n\n"+
 			"<code>%s</code>\n\n"+
 			"⚠️ <i>Keep it private. Tap 📊 My Progress if you need to see it again.</i>",
-		esc(user.FirstName), code.Code),
+		esc(user.FirstName), card.Card),
 		&gotgbot.EditMessageTextOpts{
 			ParseMode: "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
@@ -683,8 +684,8 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		})
 
 	_, _ = b.SendMessage(LoggerID, fmt.Sprintf(
-		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Code ID: <code>%s</code>\n📦 Stock left: <b>%d</b>",
-		esc(user.FirstName), user.Id, code.ID.Hex(), stockLeft),
+		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Card ID: <code>%s</code>\n📦 Stock left: <b>%d</b>",
+		esc(user.FirstName), user.Id, card.ID.Hex(), stockLeft),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 
 	return nil
@@ -715,7 +716,7 @@ func home(b *gotgbot.Bot, ctx *ext.Context) error {
 
 // ---------- Owner commands ----------
 
-func addCode(b *gotgbot.Bot, ctx *ext.Context) error {
+func addCard(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	user := ctx.EffectiveUser
 	if user.Id != OwnerID {
@@ -723,8 +724,8 @@ func addCode(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	// Codes come either from the replied-to message or from text after /addcode.
-	// One code per line.
+	// Cards come either from the replied-to message or from text after /addcard.
+	// One card per line.
 	raw := ""
 	if reply := msg.ReplyToMessage; reply != nil && strings.TrimSpace(reply.Text) != "" {
 		raw = reply.Text
@@ -736,23 +737,23 @@ func addCode(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if raw == "" {
 		_, _ = msg.Reply(b,
-			"❌ No codes provided.\n\n"+
+			"❌ No cards provided.\n\n"+
 				"<b>Usage:</b>\n"+
-				"• <code>/addcode CODE-ONE\nCODE-TWO</code> (one per line)\n"+
-				"• Reply to a message containing the codes with <code>/addcode</code>",
+				"• <code>/addcard CARD-ONE\nCARD-TWO</code> (one per line)\n"+
+				"• Reply to a message containing the cards with <code>/addcard</code>",
 			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
-	added, skipped, err := addCodes(strings.Split(raw, "\n"))
+	added, skipped, err := addCards(strings.Split(raw, "\n"))
 	if err != nil {
-		_, _ = msg.Reply(b, "❌ Failed to add codes: "+CustomError(err).Error(), nil)
+		_, _ = msg.Reply(b, "❌ Failed to add cards: "+CustomError(err).Error(), nil)
 		return nil
 	}
 
-	total, _ := countAvailableCodes()
+	total, _ := countAvailableCards()
 	_, _ = msg.Reply(b, fmt.Sprintf(
-		"✅ <b>Added %d code(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
+		"✅ <b>Added %d card(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
 		added, skipped, total),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return nil
@@ -766,8 +767,8 @@ func stock(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	available, err1 := countAvailableCodes()
-	claimed, err2 := countClaimedCodes()
+	available, err1 := countAvailableCards()
+	claimed, err2 := countClaimedCards()
 	if err1 != nil || err2 != nil {
 		_, _ = msg.Reply(b, "❌ Failed to fetch stock information.", nil)
 		return nil
@@ -794,15 +795,15 @@ func stats(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	claimedUsers, _ := countClaimedUsers()
-	available, _ := countAvailableCodes()
-	claimed, _ := countClaimedCodes()
+	available, _ := countAvailableCards()
+	claimed, _ := countClaimedCards()
 
 	text := fmt.Sprintf(
 		"📊 <b>Bot Statistics</b>\n\n"+
 			"👥 Total Users: <b>%d</b>\n"+
 			"🎁 Users Claimed: <b>%d</b>\n"+
-			"📦 Codes Available: <b>%d</b>\n"+
-			"✅ Codes Claimed: <b>%d</b>",
+			"📦 Cards Available: <b>%d</b>\n"+
+			"✅ Cards Claimed: <b>%d</b>",
 		len(allUsers), claimedUsers, available, claimed)
 	_, _ = msg.Reply(b, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return nil
