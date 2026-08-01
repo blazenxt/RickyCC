@@ -1,3 +1,7 @@
 *.exe
 .env
 .idea
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

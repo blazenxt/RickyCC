@@ -1,7 +1,8 @@
 package main
 
 import (
-	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,10 +16,9 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 
 	_ "github.com/joho/godotenv/autoload"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -29,10 +29,8 @@ const (
 var (
 	WebhookURL     string
 	Port           string
-	MongoDBURI     string
 	secretToken    string
 	OwnerID        int64
-	ctx            = context.TODO()
 	allowedUpdates = []string{"message", "callback_query"}
 )
 
@@ -72,7 +70,10 @@ func main() {
 		envFsubIDs = append(envFsubIDs, id)
 	}
 
-	MongoDBURI = os.Getenv("MONGO_URI")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "bot.db"
+	}
 
 	secretToken = os.Getenv("SECRET_TOKEN")
 	if secretToken == "" {
@@ -82,21 +83,10 @@ func main() {
 	WebhookURL = os.Getenv("WEBHOOK_URL")
 	Port = os.Getenv("PORT")
 
-	clientOptions := options.Client().ApplyURI(MongoDBURI)
-	client, err := mongo.Connect(ctx, clientOptions)
-	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
+	if err := initDB(dbPath); err != nil {
+		log.Fatalf("Failed to initialise database: %v", err)
 	}
-
-	if err := client.Ping(ctx, nil); err != nil {
-		log.Fatalf("Failed to ping MongoDB: %v", err)
-	}
-
-	fmt.Println("Connected to MongoDB")
-	db := client.Database("premiumcard")
-	userColl = db.Collection("users")
-	cardColl = db.Collection("codes")
-	settingsColl = db.Collection("settings")
+	log.Printf("Database ready (SQLite: %s)", dbPath)
 	loadConfig(envLogChatID, envFsubIDs)
 
 	bot, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
@@ -165,17 +155,19 @@ func main() {
 		},
 	))
 
-	// Admin panel settings conversations (log chat / force-join add / referral target)
+	// Admin panel settings conversations (log chat / force-join add / referral target / admin add)
 	dispatcher.AddHandler(handlers.NewConversation(
 		[]ext.Handler{
 			handlers.NewCallback(callbackquery.Prefix("admc.logset"), adminLogSetStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.fsubadd"), adminFsubAddStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.target"), adminTargetStart),
+			handlers.NewCallback(callbackquery.Prefix("admc.adminadd"), adminAdminAddStart),
 		},
 		map[string][]ext.Handler{
-			admStateLogSet:  {handlers.NewMessage(anyText, adminLogSetMessage)},
-			admStateFsubAdd: {handlers.NewMessage(anyText, adminFsubAddMessage)},
-			admStateTarget:  {handlers.NewMessage(anyText, adminTargetMessage)},
+			admStateLogSet:   {handlers.NewMessage(anyText, adminLogSetMessage)},
+			admStateFsubAdd:  {handlers.NewMessage(anyText, adminFsubAddMessage)},
+			admStateTarget:   {handlers.NewMessage(anyText, adminTargetMessage)},
+			admStateAdminAdd: {handlers.NewMessage(anyText, adminAdminAddMessage)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -329,7 +321,7 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	existingUser, err := getUser(user.Id)
-	if err != nil && err.Error() != "mongo: no documents in result" {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("Failed to fetch user: %v", err)
 		_, _ = msg.Reply(b, "❌ An error occurred. Please try again later.\n/start", nil)
 		return nil
@@ -515,7 +507,7 @@ func progressCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	userId := stringToInt64(splitData[1])
 
 	// Users may only view their own progress; the owner may view anyone's
-	if query.From.Id != userId && query.From.Id != OwnerID {
+	if query.From.Id != userId && !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ This is not your progress.",
 			ShowAlert: true,
@@ -557,7 +549,7 @@ func info(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Users may only view their own info; the owner may view anyone's
-	if userId != user.Id && user.Id != OwnerID {
+	if userId != user.Id && !isAdmin(user.Id) {
 		_, _ = msg.Reply(b, "❌ You are not authorized to view other users' info.", nil)
 		return nil
 	}
@@ -666,7 +658,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 	// Atomic claim — safe against double-taps and concurrent requests
 	card, err := claimCardAtomic(user.Id)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if errors.Is(err, errNoStock) {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 				Text:      "😔 Rewards are out of stock right now. Please check back soon!",
 				ShowAlert: true,
@@ -683,10 +675,10 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if err := markUserClaimed(user.Id, card.Card); err != nil {
 		// The card is already assigned; alert the admin instead of failing the user
-		log.Printf("CRITICAL: user %d claimed card %s but HasClaimed flag update failed: %v", user.Id, card.ID.Hex(), err)
+		log.Printf("CRITICAL: user %d claimed card %d but HasClaimed flag update failed: %v", user.Id, card.ID, err)
 		notifyLogChat(b, fmt.Sprintf(
-			"⚠️ User <code>%d</code> claimed card %s but flag update failed. Please verify manually.",
-			user.Id, card.ID.Hex()))
+			"⚠️ User <code>%d</code> claimed card <code>%d</code> but flag update failed. Please verify manually.",
+			user.Id, card.ID))
 	}
 
 	stockLeft, _ := countAvailableCards()
@@ -714,8 +706,8 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		})
 
 	notifyLogChat(b, fmt.Sprintf(
-		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Card ID: <code>%s</code>\n📦 Stock left: <b>%d</b>",
-		esc(user.FirstName), user.Id, card.ID.Hex(), stockLeft))
+		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Card ID: <code>%d</code>\n📦 Stock left: <b>%d</b>",
+		esc(user.FirstName), user.Id, card.ID, stockLeft))
 
 	return nil
 }
@@ -748,7 +740,7 @@ func home(b *gotgbot.Bot, ctx *ext.Context) error {
 func addCard(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	user := ctx.EffectiveUser
-	if user.Id != OwnerID {
+	if !isAdmin(user.Id) {
 		_, _ = msg.Reply(b, "❌ You are not authorized to use this command.", nil)
 		return nil
 	}
@@ -791,7 +783,7 @@ func addCard(b *gotgbot.Bot, ctx *ext.Context) error {
 func stock(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	user := ctx.EffectiveUser
-	if user.Id != OwnerID {
+	if !isAdmin(user.Id) {
 		_, _ = msg.Reply(b, "❌ You are not authorized to use this command.", nil)
 		return nil
 	}
@@ -813,7 +805,7 @@ func stock(b *gotgbot.Bot, ctx *ext.Context) error {
 func stats(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	user := ctx.EffectiveUser
-	if user.Id != OwnerID {
+	if !isAdmin(user.Id) {
 		_, _ = msg.Reply(b, "❌ You are not authorized to use this command.", nil)
 		return nil
 	}
@@ -844,7 +836,7 @@ func broadcast(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	if msg.From.Id != OwnerID {
+	if !isAdmin(msg.From.Id) {
 		_, _ = msg.Reply(b, "❌ You must be the owner to use this command.", nil)
 		return nil
 	}

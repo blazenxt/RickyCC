@@ -1,90 +1,72 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
-
-var settingsColl *mongo.Collection
 
 // Runtime bot configuration. Env vars only seed these on first boot —
 // afterwards everything is edited from the admin panel and persisted in
-// the "settings" collection.
+// the local database.
 var (
 	// ReferralTarget is how many friends unlock a reward (plain var; admin-only writes).
 	ReferralTarget = 5
-	// ClaimsPaused blocks reward claims while the owner restocks, etc.
+	// ClaimsPaused blocks reward claims while an admin restocks, etc.
 	ClaimsPaused = false
 
 	cfgMu        sync.RWMutex
 	logChatID    int64
 	fsubChannels []int64
+	adminIDs     []int64
 )
 
-// botSettings is the persisted configuration document (_id: "config").
-type botSettings struct {
-	ID             string  `bson:"_id"`
-	LogChatID      int64   `bson:"log_chat_id"`
-	FsubChannels   []int64 `bson:"fsub_channels"`
-	ReferralTarget int     `bson:"referral_target"`
-	ClaimsPaused   bool    `bson:"claims_paused"`
-}
-
-// loadConfig loads settings from MongoDB, seeding them from env/defaults on
-// first boot, and applies them to the runtime globals.
+// loadConfig loads settings from the database, seeding them from env/defaults
+// on first boot, and applies them to the runtime globals.
 func loadConfig(envLogChatID int64, envFsubIDs []int64) {
-	s := botSettings{}
-	err := settingsColl.FindOne(ctx, bson.M{"_id": "config"}).Decode(&s)
-	if err != nil {
-		// First boot — seed from env / defaults
-		s = botSettings{
-			ID:             "config",
-			LogChatID:      envLogChatID,
-			FsubChannels:   envFsubIDs,
-			ReferralTarget: ReferralTarget,
-			ClaimsPaused:   false,
-		}
-		if _, err := settingsColl.InsertOne(ctx, s); err != nil {
-			log.Printf("config: failed to seed settings: %v", err)
-		}
-		log.Printf("config: seeded from env (log=%d, fsub=%v, target=%d)",
-			s.LogChatID, s.FsubChannels, s.ReferralTarget)
-	}
+	fsubJSON, _ := json.Marshal(envFsubIDs)
 
-	applyConfig(s)
-	log.Printf("config loaded: log=%d fsub=%v target=%d claimsPaused=%v",
-		s.LogChatID, s.FsubChannels, ReferralTarget, ClaimsPaused)
-}
-
-func applyConfig(s botSettings) {
-	cfgMu.Lock()
-	logChatID = s.LogChatID
-	fsubChannels = append([]int64(nil), s.FsubChannels...)
-	cfgMu.Unlock()
-
-	if s.ReferralTarget > 0 {
-		ReferralTarget = s.ReferralTarget
-	}
-	ClaimsPaused = s.ClaimsPaused
-}
-
-// persistSetting $sets the given fields on the config document (upsert).
-func persistSetting(fields bson.M) error {
-	_, err := settingsColl.UpdateOne(ctx,
-		bson.M{"_id": "config"},
-		bson.M{"$set": fields},
-		options.Update().SetUpsert(true),
+	// Ensure the single settings row exists (seeded from env on first boot)
+	_, err := db.Exec(
+		`INSERT OR IGNORE INTO settings (id, log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids)
+		 VALUES (1, ?, ?, ?, 0, '[]')`,
+		envLogChatID, string(fsubJSON), ReferralTarget,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to save settings: %v", err)
+		log.Printf("config: failed to seed settings: %v", err)
 	}
-	return nil
+
+	var fsubRaw, adminsRaw string
+	var target, paused int
+	var logID int64
+	err = db.QueryRow(
+		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids FROM settings WHERE id = 1",
+	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw)
+	if err != nil {
+		log.Printf("config: failed to read settings: %v", err)
+		return
+	}
+
+	var fsubs, admins []int64
+	_ = json.Unmarshal([]byte(fsubRaw), &fsubs)
+	_ = json.Unmarshal([]byte(adminsRaw), &admins)
+
+	cfgMu.Lock()
+	logChatID = logID
+	fsubChannels = fsubs
+	adminIDs = admins
+	cfgMu.Unlock()
+
+	if target > 0 {
+		ReferralTarget = target
+	}
+	ClaimsPaused = paused != 0
+
+	log.Printf("config loaded: log=%d fsub=%v target=%d claimsPaused=%v admins=%v",
+		logID, fsubs, ReferralTarget, ClaimsPaused, admins)
 }
 
 // ---------- Getters / setters ----------
@@ -96,8 +78,8 @@ func getLogChat() int64 {
 }
 
 func setLogChat(id int64) error {
-	if err := persistSetting(bson.M{"log_chat_id": id}); err != nil {
-		return err
+	if _, err := db.Exec("UPDATE settings SET log_chat_id = ? WHERE id = 1", id); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	cfgMu.Lock()
 	logChatID = id
@@ -111,6 +93,17 @@ func getFsubChannels() []int64 {
 	return append([]int64(nil), fsubChannels...)
 }
 
+func saveFsubChannels(next []int64) error {
+	data, _ := json.Marshal(next)
+	if _, err := db.Exec("UPDATE settings SET fsub_channels = ? WHERE id = 1", string(data)); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
+	}
+	cfgMu.Lock()
+	fsubChannels = append([]int64(nil), next...)
+	cfgMu.Unlock()
+	return nil
+}
+
 // addFsubChannel appends a channel to the force-join list.
 // Returns false if it was already present.
 func addFsubChannel(id int64) (bool, error) {
@@ -120,13 +113,9 @@ func addFsubChannel(id int64) (bool, error) {
 			return false, nil
 		}
 	}
-	next := append(cur, id)
-	if err := persistSetting(bson.M{"fsub_channels": next}); err != nil {
+	if err := saveFsubChannels(append(cur, id)); err != nil {
 		return false, err
 	}
-	cfgMu.Lock()
-	fsubChannels = next
-	cfgMu.Unlock()
 	return true, nil
 }
 
@@ -146,43 +135,106 @@ func removeFsubChannel(id int64) (bool, error) {
 	if !found {
 		return false, nil
 	}
-	if err := persistSetting(bson.M{"fsub_channels": next}); err != nil {
+	if err := saveFsubChannels(next); err != nil {
 		return false, err
 	}
-	cfgMu.Lock()
-	fsubChannels = next
-	cfgMu.Unlock()
 	return true, nil
 }
 
 func clearFsubChannels() error {
-	empty := []int64{}
-	if err := persistSetting(bson.M{"fsub_channels": empty}); err != nil {
-		return err
-	}
-	cfgMu.Lock()
-	fsubChannels = empty
-	cfgMu.Unlock()
-	return nil
+	return saveFsubChannels([]int64{})
 }
 
 func setReferralTarget(n int) error {
 	if n < 1 {
 		return fmt.Errorf("target must be at least 1")
 	}
-	if err := persistSetting(bson.M{"referral_target": n}); err != nil {
-		return err
+	if _, err := db.Exec("UPDATE settings SET referral_target = ? WHERE id = 1", n); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	ReferralTarget = n
 	return nil
 }
 
 func setClaimsPaused(paused bool) error {
-	if err := persistSetting(bson.M{"claims_paused": paused}); err != nil {
-		return err
+	flag := 0
+	if paused {
+		flag = 1
+	}
+	if _, err := db.Exec("UPDATE settings SET claims_paused = ? WHERE id = 1", flag); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	ClaimsPaused = paused
 	return nil
+}
+
+// ---------- Multi-admin management ----------
+
+// isOwner reports whether the ID is the super-owner (from OWNER_ID env).
+// Only the owner may manage the admin list.
+func isOwner(id int64) bool { return id == OwnerID }
+
+// isAdmin reports whether the ID may use the admin panel (owner or listed admin).
+func isAdmin(id int64) bool {
+	if isOwner(id) {
+		return true
+	}
+	for _, a := range getAdminIDs() {
+		if a == id {
+			return true
+		}
+	}
+	return false
+}
+
+func getAdminIDs() []int64 {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return append([]int64(nil), adminIDs...)
+}
+
+func saveAdminIDs(next []int64) error {
+	data, _ := json.Marshal(next)
+	if _, err := db.Exec("UPDATE settings SET admin_ids = ? WHERE id = 1", string(data)); err != nil {
+		return fmt.Errorf("failed to save admins: %v", err)
+	}
+	cfgMu.Lock()
+	adminIDs = append([]int64(nil), next...)
+	cfgMu.Unlock()
+	return nil
+}
+
+// addAdminID grants panel access to a user. Returns false if already admin/owner.
+func addAdminID(id int64) (bool, error) {
+	if isAdmin(id) {
+		return false, nil
+	}
+	cur := getAdminIDs()
+	if err := saveAdminIDs(append(cur, id)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// removeAdminID revokes panel access. Returns false if the ID wasn't an admin.
+func removeAdminID(id int64) (bool, error) {
+	cur := getAdminIDs()
+	next := make([]int64, 0, len(cur))
+	found := false
+	for _, a := range cur {
+		if a == id {
+			found = true
+			continue
+		}
+		next = append(next, a)
+	}
+	if !found {
+		return false, nil
+	}
+	if err := saveAdminIDs(next); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ---------- Helpers ----------

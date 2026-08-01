@@ -16,4 +16,8 @@ RUN apk --no-cache add ca-certificates && \
 
 COPY --from=builder /app/premiumcard /premiumcard
 
+# DB (SQLite) is written to /data/bot.db — mount a volume to persist it:
+#   docker run -v premiumcard-data:/data ...
+WORKDIR /data
+
 ENTRYPOINT ["/premiumcard"]

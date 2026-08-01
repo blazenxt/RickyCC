@@ -18,11 +18,10 @@ const (
 	admStateFsubAdd  = "ADM_FSUB_ADD"
 	admStateLogSet   = "ADM_LOG_SET"
 	admStateTarget   = "ADM_TARGET"
+	admStateAdminAdd = "ADM_ADMIN_ADD"
 )
 
 const admTimeFmt = "02 Jan 06 15:04"
-
-func isOwner(id int64) bool { return id == OwnerID }
 
 func admBtn(text, data string) gotgbot.InlineKeyboardButton {
 	return gotgbot.InlineKeyboardButton{Text: text, CallbackData: data}
@@ -37,7 +36,7 @@ func admBackBtn() []gotgbot.InlineKeyboardButton {
 // adminCmd handles /admin — owner only.
 func adminCmd(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if !isOwner(ctx.EffectiveUser.Id) {
+	if !isAdmin(ctx.EffectiveUser.Id) {
 		_, _ = msg.Reply(b, "❌ You are not authorized to use this command.", nil)
 		return nil
 	}
@@ -59,7 +58,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 			{admBtn("📊 Dashboard", "admp.dash")},
 			{admBtn("👥 Users", "admp.users"), admBtn("🎟️ Cards", "admp.codes")},
 			{admBtn("🛠 Settings", "admp.settings"), admBtn("📢 Broadcast", "admp.bcast")},
-			{admBtn("❌ Close Panel", "admp.close")},
+			{admBtn("👑 Admins", "admp.admins"), admBtn("❌ Close", "admp.close")},
 		},
 	}
 }
@@ -150,13 +149,41 @@ func admFsubView() (string, gotgbot.InlineKeyboardMarkup) {
 	return sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
+func admAdminsView() (string, gotgbot.InlineKeyboardMarkup) {
+	ids := getAdminIDs()
+
+	var sb strings.Builder
+	sb.WriteString("👑 <b>Admin Management</b>\n\n")
+	fmt.Fprintf(&sb, "🔐 Owner: <code>%d</code>\n\n", OwnerID)
+	if len(ids) == 0 {
+		sb.WriteString("<i>No extra admins yet.</i>\n")
+	} else {
+		fmt.Fprintf(&sb, "Admins: <b>%d</b>\n", len(ids))
+		for i, a := range ids {
+			fmt.Fprintf(&sb, "%d. <code>%d</code>\n", i+1, a)
+		}
+	}
+	sb.WriteString("\n<i>Admins can use the full panel. Only the owner (OWNER_ID in env) can add/remove admins.</i>")
+
+	rows := [][]gotgbot.InlineKeyboardButton{}
+	for _, a := range ids {
+		rows = append(rows, []gotgbot.InlineKeyboardButton{
+			admBtn(fmt.Sprintf("❌ Remove %d", a), fmt.Sprintf("admp.admindel.%d", a)),
+		})
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("➕ Add Admin", "admc.adminadd")})
+	rows = append(rows, admBackBtn())
+
+	return sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
 // ---------- Panel router (admp.*) ----------
 
 func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	query := ctx.CallbackQuery
 
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ This panel is for the bot owner only.",
 			ShowAlert: true,
@@ -165,6 +192,34 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	action := strings.TrimPrefix(query.Data, "admp.")
+
+	// Admin removal carries an ID: admp.admindel.<id> (owner only)
+	if idStr, ok := strings.CutPrefix(action, "admindel."); ok {
+		if !isOwner(query.From.Id) {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "🔐 Only the bot owner can manage admins.",
+				ShowAlert: true,
+			})
+			return nil
+		}
+		adminID := stringToInt64(idStr)
+		removed, err := removeAdminID(adminID)
+		if err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		if !removed {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "⚠️ Not in the admin list.", ShowAlert: true})
+			return nil
+		}
+		log.Printf("owner removed admin %d", adminID)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "❌ Admin removed."})
+		text, kb := admAdminsView()
+		admEdit(b, msg, text, kb)
+		return nil
+	}
 
 	// Force-join channel removal carries an ID: admp.fsubdel.<id>
 	if idStr, ok := strings.CutPrefix(action, "fsubdel."); ok {
@@ -188,6 +243,18 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	switch action {
+	case "admins":
+		if !isOwner(query.From.Id) {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "🔐 Only the bot owner can manage admins.",
+				ShowAlert: true,
+			})
+			return nil
+		}
+		_, _ = query.Answer(b, nil)
+		text, kb := admAdminsView()
+		admEdit(b, msg, text, kb)
+
 	case "settings":
 		_, _ = query.Answer(b, nil)
 		text, kb := admSettingsView()
@@ -474,7 +541,7 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	query := ctx.CallbackQuery
 
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ This panel is for the bot owner only.",
 			ShowAlert: true,
@@ -595,7 +662,7 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 // adminFindUserStart is the entry point for the find-user conversation.
 func adminFindUserStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ Owner only.",
 			ShowAlert: true,
@@ -612,7 +679,7 @@ func adminFindUserStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func adminFindUserMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || !isOwner(msg.From.Id) {
+	if msg.From == nil || !isAdmin(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 
@@ -639,7 +706,7 @@ func adminFindUserMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 // adminAddCardsStart is the entry point for the add-cards conversation.
 func adminAddCardsStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text:      "❌ Owner only.",
 			ShowAlert: true,
@@ -661,7 +728,7 @@ func adminAddCardsStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || !isOwner(msg.From.Id) {
+	if msg.From == nil || !isAdmin(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 
@@ -706,7 +773,7 @@ func admSettingsBackBtn() gotgbot.InlineKeyboardMarkup {
 // adminLogSetStart asks the owner for the log chat ID.
 func adminLogSetStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text: "❌ Owner only.", ShowAlert: true})
 		return handlers.EndConversation()
@@ -724,7 +791,7 @@ func adminLogSetStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func adminLogSetMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || !isOwner(msg.From.Id) {
+	if msg.From == nil || !isAdmin(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 
@@ -757,7 +824,7 @@ func adminLogSetMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 // adminFsubAddStart asks the owner for a force-join channel ID.
 func adminFsubAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text: "❌ Owner only.", ShowAlert: true})
 		return handlers.EndConversation()
@@ -775,7 +842,7 @@ func adminFsubAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func adminFsubAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || !isOwner(msg.From.Id) {
+	if msg.From == nil || !isAdmin(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 
@@ -827,7 +894,7 @@ func adminFsubAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 // adminTargetStart asks the owner for the referral target.
 func adminTargetStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
-	if !isOwner(query.From.Id) {
+	if !isAdmin(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text: "❌ Owner only.", ShowAlert: true})
 		return handlers.EndConversation()
@@ -843,7 +910,7 @@ func adminTargetStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func adminTargetMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || !isOwner(msg.From.Id) {
+	if msg.From == nil || !isAdmin(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 
@@ -862,5 +929,65 @@ func adminTargetMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, _ = msg.Reply(b, fmt.Sprintf(
 		"✅ <b>Referral target updated!</b>\n\nUsers now need <b>%d</b> referrals to claim a reward.", n),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+	return handlers.EndConversation()
+}
+
+// adminAdminAddStart asks the owner for a user ID to grant admin access.
+func adminAdminAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isOwner(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "🔐 Only the bot owner can manage admins.",
+			ShowAlert: true,
+		})
+		return handlers.EndConversation()
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b,
+		"👑 <b>Add Admin</b>\n\n"+
+			"Send the Telegram user ID you want to grant full admin panel access.\n\n"+
+			"<i>They will be able to manage users, cards, settings and broadcast. Choose carefully.</i>\n\n"+
+			"/cancel to abort.",
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateAdminAdd)
+}
+
+func adminAdminAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isOwner(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	adminID := stringToInt64(strings.TrimSpace(msg.GetText()))
+	if adminID <= 0 {
+		_, _ = msg.Reply(b, "❌ Invalid ID. Send a numeric Telegram user ID, or /cancel.", nil)
+		return nil
+	}
+
+	added, err := addAdminID(adminID)
+	if err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+	if !added {
+		_, _ = msg.Reply(b, "⚠️ That user already has admin access.",
+			&gotgbot.SendMessageOpts{ReplyMarkup: admSettingsBackBtn()})
+		return handlers.EndConversation()
+	}
+
+	log.Printf("owner added admin %d", adminID)
+	_, _ = msg.Reply(b, fmt.Sprintf(
+		"✅ <b>Admin added!</b>\n\n<code>%d</code> can now open /admin and manage the bot.",
+		adminID),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+
+	// Let the new admin know
+	if _, err := b.SendMessage(adminID,
+		fmt.Sprintf("👑 <b>You are now an admin of %s!</b>\n\nOpen /admin to manage the bot.", BrandName),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
+		log.Printf("could not notify new admin %d: %v", adminID, err)
+	}
+
 	return handlers.EndConversation()
 }

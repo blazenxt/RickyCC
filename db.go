@@ -1,28 +1,25 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
-
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// User represents the structure of a user document in MongoDB
+// User represents a bot user
 type User struct {
-	ID            int64     `bson:"_id,omitempty" json:"_id,omitempty"`
-	Name          string    `bson:"name,omitempty" json:"name,omitempty"`
-	Username      string    `bson:"username,omitempty" json:"username,omitempty"`
-	Referrer      int64     `bson:"referrer,omitempty" json:"referrer,omitempty"`
-	ReferredUsers []int64   `bson:"referred_users,omitempty" json:"referred_users,omitempty"`
-	JoinedAt      time.Time `bson:"joined_at,omitempty" json:"joined_at,omitempty"`
-	Banned        bool      `bson:"banned,omitempty" json:"banned,omitempty"`
-	HasClaimed    bool      `bson:"has_claimed,omitempty" json:"has_claimed,omitempty"`
-	ClaimedCard   string    `bson:"claimed_code,omitempty" json:"claimed_code,omitempty"`
+	ID            int64
+	Name          string
+	Username      string
+	Referrer      int64
+	ReferredUsers []int64
+	JoinedAt      time.Time
+	Banned        bool
+	HasClaimed    bool
+	ClaimedCard   string
 }
 
 // Card statuses
@@ -33,25 +30,124 @@ const (
 
 // Card represents a reward card in the stock
 type Card struct {
-	ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Card       string             `bson:"code" json:"code"`
-	Status     string             `bson:"status" json:"status"`
-	CreatedAt  time.Time          `bson:"created_at" json:"created_at"`
-	ClaimedBy  int64              `bson:"claimed_by,omitempty" json:"claimed_by,omitempty"`
-	ClaimedAt  *time.Time         `bson:"claimed_at,omitempty" json:"claimed_at,omitempty"`
+	ID         int64
+	Card       string
+	Status     string
+	CreatedAt  time.Time
+	ClaimedBy  int64
+	ClaimedAt  *time.Time
 }
 
-var (
-	userColl *mongo.Collection
-	cardColl *mongo.Collection
-)
+// errNoStock is returned by claimCardAtomic when the stock is empty.
+var errNoStock = errors.New("no cards left in stock")
+
+var db *sql.DB
+
+const schema = `
+CREATE TABLE IF NOT EXISTS users (
+    id             INTEGER PRIMARY KEY,
+    name           TEXT    NOT NULL DEFAULT '',
+    username       TEXT    NOT NULL DEFAULT '',
+    referrer       INTEGER NOT NULL DEFAULT 0,
+    referred_users TEXT    NOT NULL DEFAULT '[]',
+    joined_at      INTEGER NOT NULL DEFAULT 0,
+    banned         INTEGER NOT NULL DEFAULT 0,
+    has_claimed    INTEGER NOT NULL DEFAULT 0,
+    claimed_card   TEXT    NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS cards (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code       TEXT    NOT NULL UNIQUE,
+    status     TEXT    NOT NULL DEFAULT 'available',
+    created_at INTEGER NOT NULL DEFAULT 0,
+    claimed_by INTEGER NOT NULL DEFAULT 0,
+    claimed_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS settings (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    log_chat_id     INTEGER NOT NULL DEFAULT 0,
+    fsub_channels   TEXT    NOT NULL DEFAULT '[]',
+    referral_target INTEGER NOT NULL DEFAULT 5,
+    claims_paused   INTEGER NOT NULL DEFAULT 0,
+    admin_ids       TEXT    NOT NULL DEFAULT '[]'
+);
+`
+
+// initDB opens (creating if needed) the local SQLite database and ensures the schema.
+func initDB(path string) error {
+	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+
+	var err error
+	db, err = sql.Open("sqlite", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %v", err)
+	}
+	if err = db.Ping(); err != nil {
+		return fmt.Errorf("failed to ping database: %v", err)
+	}
+	// SQLite handles a single writer best
+	db.SetMaxOpenConns(1)
+
+	if _, err = db.Exec(schema); err != nil {
+		return fmt.Errorf("failed to initialise schema: %v", err)
+	}
+	return nil
+}
+
+// ---------- row scanning helpers ----------
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanUser(s scanner) (*User, error) {
+	u := &User{}
+	var refJSON string
+	var joined int64
+	var banned, hasClaimed int
+
+	err := s.Scan(&u.ID, &u.Name, &u.Username, &u.Referrer, &refJSON,
+		&joined, &banned, &hasClaimed, &u.ClaimedCard)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = json.Unmarshal([]byte(refJSON), &u.ReferredUsers); err != nil {
+		return nil, fmt.Errorf("failed to decode referred users for %d: %v", u.ID, err)
+	}
+	u.JoinedAt = time.Unix(joined, 0)
+	u.Banned = banned != 0
+	u.HasClaimed = hasClaimed != 0
+	return u, nil
+}
+
+func scanCard(s scanner) (*Card, error) {
+	c := &Card{}
+	var created, claimedAt int64
+
+	err := s.Scan(&c.ID, &c.Card, &c.Status, &created, &c.ClaimedBy, &claimedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.CreatedAt = time.Unix(created, 0)
+	if claimedAt > 0 {
+		t := time.Unix(claimedAt, 0)
+		c.ClaimedAt = &t
+	}
+	return c, nil
+}
+
+const userCols = "id, name, username, referrer, referred_users, joined_at, banned, has_claimed, claimed_card"
+const cardCols = "id, code, status, created_at, claimed_by, claimed_at"
+
+// ---------- Users ----------
 
 func addUser(user User) error {
-	count, err := userColl.CountDocuments(ctx, bson.M{"_id": user.ID})
+	var count int
+	err := db.QueryRow("SELECT COUNT(1) FROM users WHERE id = ?", user.ID).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("failed to check user existence: %v", err)
 	}
-
 	if count > 0 {
 		return fmt.Errorf("user with ID %d already exists", user.ID)
 	}
@@ -60,31 +156,36 @@ func addUser(user User) error {
 		user.JoinedAt = time.Now()
 	}
 
-	_, err = userColl.InsertOne(ctx, user)
+	_, err = db.Exec(
+		"INSERT INTO users (id, name, username, referrer, joined_at) VALUES (?, ?, ?, ?, ?)",
+		user.ID, user.Name, user.Username, user.Referrer, user.JoinedAt.Unix(),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to add user: %v", err)
 	}
-
 	return nil
 }
 
 // referUser registers newUser under referrerID and links them in the
 // referrer's referred_users list.
 func referUser(referrerID int64, newUser User) error {
-	// Check if referrer exists
-	referrer := User{}
-	err := userColl.FindOne(ctx, bson.M{"_id": referrerID}).Decode(&referrer)
-	if err != nil {
+	if _, err := getUser(referrerID); err != nil {
 		return fmt.Errorf("referrer with ID %d does not exist", referrerID)
 	}
 
 	newUser.Referrer = referrerID
-	err = addUser(newUser)
-	if err != nil {
+	if err := addUser(newUser); err != nil {
 		return err
 	}
 
-	_, err = userColl.UpdateOne(ctx, bson.M{"_id": referrerID}, bson.M{"$push": bson.M{"referred_users": newUser.ID}})
+	referrer, err := getUser(referrerID)
+	if err != nil {
+		return fmt.Errorf("failed to reload referrer: %v", err)
+	}
+	referrer.ReferredUsers = append(referrer.ReferredUsers, newUser.ID)
+
+	data, _ := json.Marshal(referrer.ReferredUsers)
+	_, err = db.Exec("UPDATE users SET referred_users = ? WHERE id = ?", string(data), referrerID)
 	if err != nil {
 		return fmt.Errorf("failed to update referrer's referred users: %v", err)
 	}
@@ -92,30 +193,19 @@ func referUser(referrerID int64, newUser User) error {
 }
 
 func getUser(userID int64) (*User, error) {
-	user := User{}
-	err := userColl.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
+	return scanUser(db.QueryRow("SELECT "+userCols+" FROM users WHERE id = ?", userID))
 }
 
 // updateUserProfile refreshes the stored name/username (best effort).
 func updateUserProfile(userID int64, name, username string) {
-	_, err := userColl.UpdateOne(ctx,
-		bson.M{"_id": userID},
-		bson.M{"$set": bson.M{"name": name, "username": username}},
-	)
+	_, err := db.Exec("UPDATE users SET name = ?, username = ? WHERE id = ?", name, username, userID)
 	if err != nil {
-		log.Printf("failed to update profile for user %d: %v", userID, err)
+		fmt.Printf("failed to update profile for user %d: %v\n", userID, err)
 	}
 }
 
 func markUserClaimed(userID int64, card string) error {
-	_, err := userColl.UpdateOne(ctx,
-		bson.M{"_id": userID},
-		bson.M{"$set": bson.M{"has_claimed": true, "claimed_code": card}},
-	)
+	_, err := db.Exec("UPDATE users SET has_claimed = 1, claimed_card = ? WHERE id = ?", card, userID)
 	if err != nil {
 		return fmt.Errorf("failed to mark user %d as claimed: %v", userID, err)
 	}
@@ -123,58 +213,72 @@ func markUserClaimed(userID int64, card string) error {
 }
 
 func countClaimedUsers() (int64, error) {
-	return userColl.CountDocuments(ctx, bson.M{"has_claimed": true})
+	var n int64
+	err := db.QueryRow("SELECT COUNT(1) FROM users WHERE has_claimed = 1").Scan(&n)
+	return n, err
 }
 
 func countAllUsers() (int64, error) {
-	return userColl.CountDocuments(ctx, bson.M{})
+	var n int64
+	err := db.QueryRow("SELECT COUNT(1) FROM users").Scan(&n)
+	return n, err
 }
 
 func countBannedUsers() (int64, error) {
-	return userColl.CountDocuments(ctx, bson.M{"banned": true})
+	var n int64
+	err := db.QueryRow("SELECT COUNT(1) FROM users WHERE banned = 1").Scan(&n)
+	return n, err
 }
 
 func getAllUsers() ([]User, error) {
-	cursor, err := userColl.Find(ctx, bson.M{})
+	rows, err := db.Query("SELECT " + userCols + " FROM users")
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve users: %v", err)
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	var users []User
-	if err = cursor.All(ctx, &users); err != nil {
-		return nil, fmt.Errorf("failed to decode users: %v", err)
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, *u)
 	}
-	return users, nil
+	return users, rows.Err()
 }
 
 // getRecentUsers returns the newest users (by join date), capped at limit.
 func getRecentUsers(limit int64) ([]User, error) {
-	opts := options.Find().SetSort(bson.M{"joined_at": -1}).SetLimit(limit)
-	cursor, err := userColl.Find(ctx, bson.M{}, opts)
+	rows, err := db.Query("SELECT "+userCols+" FROM users ORDER BY joined_at DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve recent users: %v", err)
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	var users []User
-	if err = cursor.All(ctx, &users); err != nil {
-		return nil, fmt.Errorf("failed to decode users: %v", err)
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, *u)
 	}
-	return users, nil
+	return users, rows.Err()
 }
 
 // ---------- Admin user actions ----------
 
 func setUserBanned(userID int64, banned bool) error {
-	res, err := userColl.UpdateOne(ctx,
-		bson.M{"_id": userID},
-		bson.M{"$set": bson.M{"banned": banned}},
-	)
+	flag := 0
+	if banned {
+		flag = 1
+	}
+	res, err := db.Exec("UPDATE users SET banned = ? WHERE id = ?", flag, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update ban status for user %d: %v", userID, err)
 	}
-	if res.MatchedCount == 0 {
+	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("user with ID %d does not exist", userID)
 	}
 	return nil
@@ -182,20 +286,17 @@ func setUserBanned(userID int64, banned bool) error {
 
 // resetUserClaim clears a user's claim so they can claim a new reward.
 func resetUserClaim(userID int64) error {
-	res, err := userColl.UpdateOne(ctx,
-		bson.M{"_id": userID},
-		bson.M{"$unset": bson.M{"has_claimed": "", "claimed_code": ""}},
-	)
+	res, err := db.Exec("UPDATE users SET has_claimed = 0, claimed_card = '' WHERE id = ?", userID)
 	if err != nil {
 		return fmt.Errorf("failed to reset claim for user %d: %v", userID, err)
 	}
-	if res.MatchedCount == 0 {
+	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("user with ID %d does not exist", userID)
 	}
 	return nil
 }
 
-// deleteUser removes a user document and unlinks them from their referrer.
+// deleteUser removes a user row and unlinks them from their referrer.
 func deleteUser(userID int64) error {
 	u, err := getUser(userID)
 	if err != nil {
@@ -203,20 +304,25 @@ func deleteUser(userID int64) error {
 	}
 
 	if u.Referrer > 0 {
-		_, err := userColl.UpdateOne(ctx,
-			bson.M{"_id": u.Referrer},
-			bson.M{"$pull": bson.M{"referred_users": userID}},
-		)
-		if err != nil {
-			log.Printf("failed to unlink user %d from referrer %d: %v", userID, u.Referrer, err)
+		if ref, rerr := getUser(u.Referrer); rerr == nil {
+			next := make([]int64, 0, len(ref.ReferredUsers))
+			for _, id := range ref.ReferredUsers {
+				if id != userID {
+					next = append(next, id)
+				}
+			}
+			data, _ := json.Marshal(next)
+			if _, uerr := db.Exec("UPDATE users SET referred_users = ? WHERE id = ?", string(data), u.Referrer); uerr != nil {
+				fmt.Printf("failed to unlink user %d from referrer %d: %v\n", userID, u.Referrer, uerr)
+			}
 		}
 	}
 
-	res, err := userColl.DeleteOne(ctx, bson.M{"_id": userID})
+	res, err := db.Exec("DELETE FROM users WHERE id = ?", userID)
 	if err != nil {
 		return fmt.Errorf("failed to delete user %d: %v", userID, err)
 	}
-	if res.DeletedCount == 0 {
+	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("user with ID %d does not exist", userID)
 	}
 	return nil
@@ -224,15 +330,20 @@ func deleteUser(userID int64) error {
 
 // ---------- Reward card stock ----------
 
-// addCards inserts new cards into the stock, skipping empty lines,
-// in-batch duplicates, and cards that already exist in the database.
-// Returns (added, skipped, error).
+// addCards inserts new cards into the stock. Returns (added, skipped, error)
+// where skipped counts non-empty lines that were duplicates (in-batch or
+// already in the DB). Blank lines are ignored entirely.
 func addCards(lines []string) (int, int, error) {
 	seen := map[string]bool{}
+	nonEmpty := 0
 	var fresh []string
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
-		if l == "" || seen[l] {
+		if l == "" {
+			continue
+		}
+		nonEmpty++
+		if seen[l] {
 			continue
 		}
 		seen[l] = true
@@ -242,94 +353,129 @@ func addCards(lines []string) (int, int, error) {
 		return 0, 0, fmt.Errorf("no valid cards provided")
 	}
 
-	// Find which of these cards already exist in the DB
-	cursor, err := cardColl.Find(ctx,
-		bson.M{"code": bson.M{"$in": fresh}},
-		options.Find().SetProjection(bson.M{"code": 1}),
-	)
+	tx, err := db.Begin()
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to check existing cards: %v", err)
+		return 0, 0, fmt.Errorf("failed to start transaction: %v", err)
 	}
-	var existing []Card
-	if err = cursor.All(ctx, &existing); err != nil {
-		return 0, 0, fmt.Errorf("failed to decode existing codes: %v", err)
-	}
-	dup := map[string]bool{}
-	for _, c := range existing {
-		dup[c.Card] = true
-	}
+	defer tx.Rollback()
 
-	now := time.Now()
-	var docs []interface{}
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO cards (code, status, created_at) VALUES (?, ?, ?)")
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to prepare insert: %v", err)
+	}
+	defer stmt.Close()
+
+	added := 0
+	now := time.Now().Unix()
 	for _, c := range fresh {
-		if dup[c] {
-			continue
+		res, err := stmt.Exec(c, CardAvailable, now)
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to insert cards: %v", err)
 		}
-		docs = append(docs, Card{Card: c, Status: CardAvailable, CreatedAt: now})
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
+		}
 	}
 
-	skipped := len(fresh) - len(docs)
-	if len(docs) == 0 {
-		return 0, skipped, nil
+	if err = tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("failed to commit cards: %v", err)
 	}
-
-	res, err := cardColl.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
-	if err != nil {
-		return 0, skipped, fmt.Errorf("failed to insert cards: %v", err)
-	}
-	return len(res.InsertedIDs), skipped, nil
+	return added, nonEmpty - added, nil
 }
 
 func countAvailableCards() (int64, error) {
-	return cardColl.CountDocuments(ctx, bson.M{"status": CardAvailable})
+	var n int64
+	err := db.QueryRow("SELECT COUNT(1) FROM cards WHERE status = ?", CardAvailable).Scan(&n)
+	return n, err
 }
 
 func countClaimedCards() (int64, error) {
-	return cardColl.CountDocuments(ctx, bson.M{"status": CardClaimed})
+	var n int64
+	err := db.QueryRow("SELECT COUNT(1) FROM cards WHERE status = ?", CardClaimed).Scan(&n)
+	return n, err
 }
 
-// claimCardAtomic atomically marks the oldest available card as claimed by the
-// user, so concurrent claims can never hand out the same card twice.
-// Returns mongo.ErrNoDocuments when the stock is empty.
+// claimCardAtomic atomically claims the oldest available card for the user
+// inside a transaction, so the same card can never be handed out twice.
+// Returns errNoStock when the stock is empty.
 func claimCardAtomic(userID int64) (*Card, error) {
-	now := time.Now()
-	opts := options.FindOneAndUpdate().
-		SetReturnDocument(options.After).
-		SetSort(bson.M{"created_at": 1})
-
-	var c Card
-	err := cardColl.FindOneAndUpdate(ctx,
-		bson.M{"status": CardAvailable},
-		bson.M{"$set": bson.M{"status": CardClaimed, "claimed_by": userID, "claimed_at": now}},
-		opts,
-	).Decode(&c)
+	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to start transaction: %v", err)
 	}
-	return &c, nil
+	defer tx.Rollback()
+
+	var (
+		cardID  int64
+		code    string
+		created int64
+	)
+	err = tx.QueryRow(
+		"SELECT id, code, created_at FROM cards WHERE status = ? ORDER BY created_at LIMIT 1",
+		CardAvailable,
+	).Scan(&cardID, &code, &created)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errNoStock
+		}
+		return nil, fmt.Errorf("failed to fetch card: %v", err)
+	}
+
+	now := time.Now().Unix()
+	res, err := tx.Exec(
+		"UPDATE cards SET status = ?, claimed_by = ?, claimed_at = ? WHERE id = ? AND status = ?",
+		CardClaimed, userID, now, cardID, CardAvailable,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim card: %v", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, errNoStock // lost the race; treated as no stock for this attempt
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit claim: %v", err)
+	}
+
+	t := time.Unix(now, 0)
+	return &Card{
+		ID:         cardID,
+		Card:       code,
+		Status:     CardClaimed,
+		CreatedAt:  time.Unix(created, 0),
+		ClaimedBy:  userID,
+		ClaimedAt:  &t,
+	}, nil
 }
 
 // getRecentClaims returns the latest claimed cards (most recent first).
 func getRecentClaims(limit int64) ([]Card, error) {
-	opts := options.Find().SetSort(bson.M{"claimed_at": -1}).SetLimit(limit)
-	cursor, err := cardColl.Find(ctx, bson.M{"status": CardClaimed}, opts)
+	rows, err := db.Query(
+		"SELECT "+cardCols+" FROM cards WHERE status = ? ORDER BY claimed_at DESC LIMIT ?",
+		CardClaimed, limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve claims: %v", err)
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var codes []Card
-	if err = cursor.All(ctx, &codes); err != nil {
-		return nil, fmt.Errorf("failed to decode claims: %v", err)
+	var cards []Card
+	for rows.Next() {
+		c, err := scanCard(rows)
+		if err != nil {
+			return nil, err
+		}
+		cards = append(cards, *c)
 	}
-	return codes, nil
+	return cards, rows.Err()
 }
 
 // clearClaimedCards permanently deletes all claimed card records.
 func clearClaimedCards() (int64, error) {
-	res, err := cardColl.DeleteMany(ctx, bson.M{"status": CardClaimed})
+	res, err := db.Exec("DELETE FROM cards WHERE status = ?", CardClaimed)
 	if err != nil {
 		return 0, fmt.Errorf("failed to clear claimed cards: %v", err)
 	}
-	return res.DeletedCount, nil
+	n, _ := res.RowsAffected()
+	return n, nil
 }
