@@ -76,6 +76,36 @@ var premiumEmojiDefaults = map[string]string{
 	"target":   "6203738495639360972", // 💯
 	"sos":      "6206306186002698906", // ❓
 	"palette":  "5201830300312683111", // 💜
+
+	// Second wave — owner-supplied IDs for every previously-uncovered
+	// Unicode emoji (back buttons, admin actions, help keycaps, ...).
+	"back":         "5352759161945867747", // 🔙
+	"add":          "5235472087652510235", // ➕
+	"broom":        "5280603307646149925", // 🧹
+	"save":         "5462956611033117422", // 💾
+	"play":         "5208607440878197365", // ▶️
+	"pause":        "5042036407137207122", // ⏸️
+	"refresh":      "5226702984204797593", // 🔄
+	"adminlock":    "5197288647275071607", // 🔐
+	"find":         "5463352748751753567", // 🔍
+	"trash":        "5372825386591732174", // 🗑️
+	"gear":         "5420155432272438703", // ⚙️
+	"crown":        "6172745002314118594", // 👑
+	"diamond":      "5280858699286471614", // 💎
+	"home":         "5346175999283308805", // 🏠
+	"new":          "6052910771896064432", // 🆕
+	"receipt":      "5444856076954520455", // 🧾
+	"bolt":         "6253483549890973859", // ⚡
+	"rocket":       "6337086239358851786", // 🚀
+	"info":         "5334544901428229844", // ℹ️
+	"sad":          "5278552623971049028", // 😔
+	"pointup":      "6242033978828658746", // 👆
+	"smalldiamond": "5972165824817925650", // 🔸
+	"greendot":     "5981066684977384749", // 🟢
+	"num1":         "5305763715692377402", // 1️⃣
+	"num2":         "5307907239380528763", // 2️⃣
+	"num3":         "5305783000095537258", // 3️⃣
+	"num4":         "5305255243104138538", // 4️⃣
 }
 
 var iconDefaults = map[string]string{
@@ -119,6 +149,36 @@ var iconDefaults = map[string]string{
 	"target":   "🎯",
 	"sos":      "🆘",
 	"palette":  "🎨",
+
+	// Second wave — defaults MUST byte-match the literals used in source
+	// (variation selectors included), otherwise premiumize can't find them.
+	"back":         "🔙",
+	"add":          "➕",
+	"broom":        "🧹",
+	"save":         "💾",
+	"play":         "▶️",
+	"pause":        "⏸️",
+	"refresh":      "🔄",
+	"adminlock":    "🔐",
+	"find":         "🔍",
+	"trash":        "🗑️",
+	"gear":         "⚙️",
+	"crown":        "👑",
+	"diamond":      "💎",
+	"home":         "🏠",
+	"new":          "🆕",
+	"receipt":      "🧾",
+	"bolt":         "⚡",
+	"rocket":       "🚀",
+	"info":         "ℹ️",
+	"sad":          "😔",
+	"pointup":      "👆",
+	"smalldiamond": "🔸",
+	"greendot":     "🟢",
+	"num1":         "1️⃣",
+	"num2":         "2️⃣",
+	"num3":         "3️⃣",
+	"num4":         "4️⃣",
 }
 
 var tgEmojiTagRe = regexp.MustCompile(`<tg-emoji emoji-id="\d+">.*?</tg-emoji>`)
@@ -397,19 +457,27 @@ func decorateButtons(kb *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboardMa
 	return applyButtonStyles(premiumizeButtons(kb))
 }
 
-// preloadPremiumEmojiSet auto-loads the curated premium set on boot, but
-// only when (a) NO custom mapping exists yet — an owner's hand-tuned slots
-// are never stomped — and (b) a live probe proves this bot may actually
-// send those public-pack custom emoji (Fragment extra username or a Premium
-// owner). Without the probe, a bot lacking rights would wedge every
-// message send. The probe message is deleted immediately.
+// preloadPremiumEmojiSet keeps the curated premium set applied on boot.
+// It MERGES missing slots only — any value the owner already configured
+// (custom IDs or plain emojis) is preserved untouched, so this is safe to
+// run on every restart: fresh deploys get the full set, older installs
+// gain newly-added slots automatically. A live probe (deleted right
+// after) first proves the bot may send public-pack custom emoji — without
+// it, unusable IDs would wedge message delivery.
 func preloadPremiumEmojiSet(b *gotgbot.Bot, ownerID int64) {
-	if n := len(getEmojiIDs()); n > 0 {
-		log.Printf("premium emoji: %d custom slot(s) already configured — boot pre-load skipped", n)
+	existing := getEmojiIDs()
+	missing := map[string]string{}
+	for slot, id := range premiumEmojiDefaults {
+		if _, ok := existing[slot]; !ok {
+			missing[slot] = id
+		}
+	}
+	if len(missing) == 0 {
+		log.Printf("premium emoji: full curated set (%d slots) already active", len(premiumEmojiDefaults))
 		return
 	}
 	if ownerID == 0 {
-		log.Printf("premium emoji pre-load skipped: OWNER_ID not set (use /admin → ⚡ Load Premium Set anytime)")
+		log.Printf("premium emoji pre-load skipped (%d slots ready): OWNER_ID not set — use /admin → ⚡ Load Premium Set anytime", len(missing))
 		return
 	}
 
@@ -419,14 +487,18 @@ func preloadPremiumEmojiSet(b *gotgbot.Bot, ownerID int64) {
 	}
 	probe, err := b.SendMessage(ownerID, sb.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	if err != nil {
-		log.Printf("premium emoji pre-load skipped: bot can't send public custom emoji yet (%v) — needs a Fragment username / Premium owner, then /admin → ⚡ Load Premium Set", err)
+		log.Printf("premium emoji pre-load skipped (%d slots ready): bot can't send public custom emoji yet (%v) — needs a Fragment username / Premium owner, then /admin → ⚡ Load Premium Set", len(missing), err)
 		return
 	}
 	_, _ = b.DeleteMessage(ownerID, probe.MessageId, nil)
 
-	if err := setEmojiIDs(premiumEmojiDefaults); err != nil {
+	merged := getEmojiIDs() // fresh copy — keeps every owner-made mapping
+	for slot, id := range missing {
+		merged[slot] = id
+	}
+	if err := setEmojiIDs(merged); err != nil {
 		log.Printf("premium emoji pre-load failed: %v", err)
 		return
 	}
-	log.Printf("premium emoji set pre-loaded on boot: %d slots", len(premiumEmojiDefaults))
+	log.Printf("premium emoji set active: %d slots (%d newly added on this boot)", len(merged), len(missing))
 }

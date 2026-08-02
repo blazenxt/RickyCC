@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -225,6 +226,51 @@ func TestButtonStyleNeverEmpty(t *testing.T) {
 		if !valid[s] {
 			t.Fatalf("callback %q got unstyled %q", d, s)
 		}
+	}
+}
+
+// Every new (second-wave) slot's default glyph must appear VERBATIM in the
+// bot's Go sources — otherwise premiumize can never find it (e.g. missing
+// variation selector, wrong keycap sequence) and the slot is dead weight.
+func TestSecondWaveDefaultsPresentInSource(t *testing.T) {
+	newSlots := []string{
+		"back", "add", "broom", "save", "play", "pause", "refresh",
+		"adminlock", "find", "trash", "gear", "crown", "diamond", "home",
+		"new", "receipt", "bolt", "rocket", "info", "sad", "pointup",
+		"smalldiamond", "greendot", "num1", "num2", "num3", "num4",
+	}
+
+	var src strings.Builder
+	for _, f := range []string{"main.go", "admin.go", "fsub.go", "captcha.go", "config.go", "dbbackup.go", "utils.go"} {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		src.Write(data)
+	}
+	hay := src.String()
+
+	for _, slot := range newSlots {
+		def, ok := iconDefaults[slot]
+		if !ok {
+			t.Fatalf("slot %q missing from iconDefaults", slot)
+		}
+		if id, ok := premiumEmojiDefaults[slot]; !ok || !isEmojiID(id) {
+			t.Fatalf("slot %q missing numeric ID in premiumEmojiDefaults", slot)
+		}
+		if !strings.Contains(hay, def) {
+			t.Fatalf("default %q for slot %q not found anywhere in bot sources", def, slot)
+		}
+	}
+
+	// Default glyphs must be unique across the whole registry — duplicates
+	// would make the premiumize sweep pick a random winner per slot.
+	seen := map[string]string{}
+	for slot, def := range iconDefaults {
+		if prev, dup := seen[def]; dup {
+			t.Fatalf("default %q used by both %q and %q", def, prev, slot)
+		}
+		seen[def] = slot
 	}
 }
 
