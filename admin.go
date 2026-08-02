@@ -375,10 +375,10 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			if u.Banned {
 				flags += " 🚫"
 			}
-			fmt.Fprintf(&sb, "• %s — <code>%d</code> — %d/%d%s\n",
-				name, u.ID, len(u.ReferredUsers), ReferralTarget, flags)
+			fmt.Fprintf(&sb, "• %s — <code>%d</code> — 👥%d 🎁×%d%s\n",
+				name, u.ID, len(u.ReferredUsers), u.Claims, flags)
 		}
-		sb.WriteString("\n🎁 claimed · 🚫 banned — use 🔍 Find User for actions")
+		sb.WriteString("\n🎁 has rewards · 🚫 banned — use 🔍 Find User for actions")
 
 		admEdit(b, msg, sb.String(), gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
@@ -498,9 +498,12 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 // ---------- User actions (admu.<action>.<id>) ----------
 
 func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
-	claim := "❌ Not claimed"
-	if u.HasClaimed {
-		claim = fmt.Sprintf("✅ Claimed:\n<code>%s</code>", esc(truncate(u.ClaimedCard, 50)))
+	claim := fmt.Sprintf("<b>%d</b> claimed", u.Claims)
+	if u.Claims > 0 {
+		claim += fmt.Sprintf("\n└ Latest: <code>%s</code>", esc(truncate(u.ClaimedCard, 40)))
+	}
+	if ready := unlocksAvailable(len(u.ReferredUsers), u.Claims, ReferralTarget); ready > 0 {
+		claim += fmt.Sprintf("\n└ 🏆 <b>%d ready</b> to collect", ready)
 	}
 	status := "✅ Active"
 	if u.Banned {
@@ -524,8 +527,8 @@ func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 			"🆔 ID: <code>%d</code>\n"+
 			"📛 Name: %s %s\n"+
 			"🔗 Referrer: <code>%d</code>\n"+
-			"👥 Referrals: <b>%d/%d</b>\n"+
-			"🎁 Reward: %s\n"+
+			"👥 Referrals: <b>%d</b> (1 card / %d refs)\n"+
+			"🎁 Rewards: %s\n"+
 			"📅 Joined: %s\n"+
 			"🔰 Status: <b>%s</b>",
 		u.ID, name, uname, u.Referrer,
@@ -539,7 +542,7 @@ func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 
 	kb := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			{banBtn, admBtn("🔄 Reset Claim", fmt.Sprintf("admu.reset.%d", u.ID))},
+			{banBtn, admBtn("🔄 Reset Claims", fmt.Sprintf("admu.reset.%d", u.ID))},
 			{admBtn("🗑️ Delete User", fmt.Sprintf("admu.del.%d", u.ID))},
 			{admBtn("🔙 Users", "admp.users")},
 		},
@@ -604,7 +607,7 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 		log.Printf("admin reset claim for user %d", uid)
-		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔄 Claim reset — user can claim again."})
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔄 Claims reset — all earned rewards can be collected again."})
 
 	case "del":
 		// Confirmation step

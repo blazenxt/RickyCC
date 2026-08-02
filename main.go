@@ -226,14 +226,20 @@ func main() {
 // ---------- UI helpers ----------
 
 // progressBar renders a 🟩/⬜ bar of length `target`.
+// progressBar renders a fixed-width bar so even huge referral targets display sanely.
 func progressBar(done, target int) string {
+	const width = 10
+	if target <= 0 {
+		return ""
+	}
 	if done > target {
 		done = target
 	}
 	if done < 0 {
 		done = 0
 	}
-	return strings.Repeat("🟩", done) + strings.Repeat("⬜", target-done)
+	filled := done * width / target
+	return strings.Repeat("🟩", filled) + strings.Repeat("⬜", width-filled)
 }
 
 // mainKeyboard is the primary inline keyboard shown on /start and home.
@@ -282,23 +288,26 @@ func homeKeyboard() gotgbot.InlineKeyboardMarkup {
 
 func welcomeText(firstName string, u *User, isNew bool) string {
 	done := len(u.ReferredUsers)
+	target := ReferralTarget
+	rem := 0
+	if target > 0 {
+		rem = done % target
+	}
 	greeting := "👋 <b>Welcome back"
 	if isNew {
 		greeting = "🎉 <b>Welcome"
 	}
 	text := fmt.Sprintf(
 		"%s to %s, %s!</b>\n\n"+
-			"👥 <b>Referrals:</b> %d/%d  %s\n\n",
-		greeting, BrandName, esc(firstName), done, ReferralTarget, progressBar(done, ReferralTarget))
+			"👥 <b>Referrals:</b> %d\n"+
+			"🎁 <b>Rewards claimed:</b> %d\n"+
+			"📶 <b>Next card:</b> %d/%d  %s\n\n",
+		greeting, BrandName, esc(firstName), done, u.Claims, rem, target, progressBar(rem, target))
 
-	if done >= ReferralTarget {
-		if u.HasClaimed {
-			text += "✅ You have already claimed your reward."
-		} else {
-			text += "🏆 <b>Target complete!</b> Tap 🎁 Claim Reward below!"
-		}
-	} else {
-		text += fmt.Sprintf("🔗 Share your referral link — <b>%d more</b> to unlock your Premium Card!", ReferralTarget-done)
+	if ready := unlocksAvailable(done, u.Claims, target); ready > 0 {
+		text += fmt.Sprintf("🏆 <b>%d reward(s) ready!</b> Tap 🎁 Claim Reward below!", ready)
+	} else if target > 0 {
+		text += fmt.Sprintf("🔗 Share your link — every <b>%d referrals = 1 card</b> 🎁\n<b>%d more</b> to your next card!", target, nextRewardIn(done, target))
 	}
 	return text
 }
@@ -382,15 +391,27 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 		// Notify the referrer about their progress
 		if referrer, err := getUser(referrerID); err == nil {
 			doneCount := len(referrer.ReferredUsers)
+			target := ReferralTarget
+			ready := unlocksAvailable(doneCount, referrer.Claims, target)
+			remD := 0
+			if target > 0 {
+				remD = doneCount % target
+			}
 			notify := ""
-			if doneCount >= ReferralTarget {
+			switch {
+			case ready > 0 && target > 0 && doneCount%target == 0:
 				notify = fmt.Sprintf(
-					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d/%d</b> %s\n\n🏆 <b>Target complete!</b> Open the bot and tap 🎁 Claim Reward!",
-					esc(user.FirstName), doneCount, ReferralTarget, progressBar(doneCount, ReferralTarget))
-			} else {
+					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d</b>\n\n🏆 <b>New card unlocked!</b> You now have <b>%d reward(s) ready</b> — open the bot and tap 🎁 Claim Reward!",
+					esc(user.FirstName), doneCount, ready)
+			case ready > 0:
 				notify = fmt.Sprintf(
-					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d/%d</b> %s\n🔗 <b>%d more</b> to unlock your reward!",
-					esc(user.FirstName), doneCount, ReferralTarget, progressBar(doneCount, ReferralTarget), ReferralTarget-doneCount)
+					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d</b>\n🎁 You still have <b>%d reward(s)</b> waiting — claim them anytime!\n🔗 <b>%d more</b> to your next card.",
+					esc(user.FirstName), doneCount, ready, nextRewardIn(doneCount, target))
+			default:
+				notify = fmt.Sprintf(
+					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d</b>  %s\n🔗 <b>%d more</b> to your next card 🎁",
+					esc(user.FirstName), doneCount,
+					progressBar(remD, target), nextRewardIn(doneCount, target))
 			}
 			_, _ = b.SendMessage(referrerID, notify, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		}
@@ -428,8 +449,9 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 
 <b>How it works</b>
 1️⃣ Join our channels
-2️⃣ Refer <b>%d friends</b> with your link
-3️⃣ Claim your reward 🎁
+2️⃣ Refer friends with your link — every <b>%d referrals = 1 card</b> 🎁
+3️⃣ Claim rewards &amp; keep going — <b>no limit!</b>
+<i>Example: %d referrals → 1 card, %d referrals → 2 cards, %d referrals → 5 cards...</i>
 
 <b>🔹 User Commands</b>
 /start - 🚀 Start the bot & get your referral link
@@ -444,7 +466,7 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 /broadcast - 📢 Broadcast a message to all users
 
 ⚠️ <i>Owner commands are restricted to the bot owner.</i>
-`, BrandName, ReferralTarget)
+`, BrandName, ReferralTarget, ReferralTarget, ReferralTarget*2, ReferralTarget*5)
 
 	keyboard := homeKeyboard()
 	_, _ = msg.Reply(b, text, &gotgbot.SendMessageOpts{
@@ -477,21 +499,38 @@ func progressCmd(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func progressText(b *gotgbot.Bot, u *User) string {
 	done := len(u.ReferredUsers)
+	target := ReferralTarget
+	rem := 0
+	if target > 0 {
+		rem = done % target
+	}
+	ready := unlocksAvailable(done, u.Claims, target)
+	referUrl := fmt.Sprintf("https://t.me/%s?start=%d", b.User.Username, u.ID)
+
 	text := fmt.Sprintf(
 		"📊 <b>Your Progress</b>\n\n"+
-			"👥 <b>Referrals:</b> %d/%d  %s\n\n",
-		done, ReferralTarget, progressBar(done, ReferralTarget))
+			"👥 <b>Referrals:</b> %d total\n"+
+			"🎁 <b>Rewards claimed:</b> %d\n"+
+			"📶 <b>Next card:</b> %d/%d  %s\n",
+		done, u.Claims, rem, target, progressBar(rem, target))
 
-	if done >= ReferralTarget {
-		if u.HasClaimed {
-			text += "✅ Reward already claimed."
-		} else {
-			text += "🏆 <b>Target complete!</b> Tap 🎁 Claim Reward!"
-		}
-	} else {
-		referUrl := fmt.Sprintf("https://t.me/%s?start=%d", b.User.Username, u.ID)
-		text += fmt.Sprintf("🔗 <b>%d more</b> to unlock your reward.\n\nYour referral link:\n<code>%s</code>", ReferralTarget-done, referUrl)
+	if ready > 0 {
+		text += fmt.Sprintf("\n🏆 <b>%d reward(s) unlocked!</b> Tap 🎁 Claim Reward!\n", ready)
+	} else if target > 0 {
+		text += fmt.Sprintf("\n🔗 <b>%d more referral(s)</b> to your next card — every %d referrals = 1 card!\n", nextRewardIn(done, target), target)
 	}
+
+	// Collected cards stay one tap away, copyable (latest 3)
+	if u.Claims > 0 {
+		if cards, err := getUserCards(u.ID, 3); err == nil && len(cards) > 0 {
+			text += "\n💳 <b>Your latest card(s):</b>\n"
+			for _, c := range cards {
+				text += fmt.Sprintf("▫️ <code>%s</code>\n", esc(c.Card))
+			}
+		}
+	}
+
+	text += fmt.Sprintf("\n🔗 Keep sharing — referrals never expire!\nYour referral link:\n<code>%s</code>", referUrl)
 	return text
 }
 
@@ -566,19 +605,25 @@ func info(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	claimStatus := "❌ Not claimed"
-	if u.HasClaimed {
-		claimStatus = "✅ Claimed"
-	}
 	done := len(u.ReferredUsers)
+	target := ReferralTarget
+	rem := 0
+	if target > 0 {
+		rem = done % target
+	}
+	reward := fmt.Sprintf("<b>%d</b> claimed", u.Claims)
+	if ready := unlocksAvailable(done, u.Claims, target); ready > 0 {
+		reward += fmt.Sprintf(" • 🏆 <b>%d ready!</b>", ready)
+	}
 
 	response := fmt.Sprintf(
 		"👤 <b>User Information</b>\n\n"+
 			"🔹 <b>User ID:</b> <code>%d</code>\n"+
 			"🔗 <b>Referrer:</b> <code>%d</code>\n"+
-			"👥 <b>Referrals:</b> %d/%d  %s\n"+
-			"🎁 <b>Reward:</b> %s",
-		u.ID, u.Referrer, done, ReferralTarget, progressBar(done, ReferralTarget), claimStatus)
+			"👥 <b>Referrals:</b> %d total\n"+
+			"📶 <b>Next card:</b> %d/%d  %s\n"+
+			"🎁 <b>Rewards:</b> %s",
+		u.ID, u.Referrer, done, rem, target, progressBar(rem, target), reward)
 
 	_, _ = msg.Reply(b, response, &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
@@ -636,44 +681,36 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	if u.HasClaimed {
-		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text:      "✅ You already claimed your reward.",
-			ShowAlert: true,
-		})
-		_, _, _ = msg.EditText(b, fmt.Sprintf(
-			"🎁 <b>Your reward:</b>\n\n<code>%s</code>", u.ClaimedCard),
-			&gotgbot.EditMessageTextOpts{
-				ParseMode:   "HTML",
-				ReplyMarkup: homeKeyboard(),
-			})
-		return nil
-	}
-
+	// Repeat-reward gate: every ReferralTarget referrals = 1 new card.
 	done := len(u.ReferredUsers)
-	if done < ReferralTarget {
+	if ready := unlocksAvailable(done, u.Claims, ReferralTarget); ready <= 0 {
+		need := nextRewardIn(done, ReferralTarget)
+		alert := fmt.Sprintf("🔒 Locked! Refer %d more friend(s) to unlock your first card.", need)
+		if u.Claims > 0 {
+			alert = fmt.Sprintf("✅ All %d earned reward(s) collected! Refer %d more friend(s) for your next card.", u.Claims, need)
+		}
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text:      fmt.Sprintf("🔒 Locked! Refer %d more friend(s) to unlock (%d/%d).", ReferralTarget-done, done, ReferralTarget),
+			Text:      alert,
 			ShowAlert: true,
 		})
 		return nil
 	}
 
-	// Atomic claim — safe against double-taps and concurrent requests
-	// Exactly one card, issued exactly once — enforced atomically in the DB.
-	card, err := issueCard(user.Id)
+	// Atomic claim — safe against double-taps and concurrent requests.
+	// One card per unlock, each physical card issued exactly once — enforced in the DB.
+	card, err := issueCard(user.Id, ReferralTarget)
 	if err != nil {
 		switch {
 		case errors.Is(err, errNoStock):
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-				Text:      "😔 Rewards are out of stock right now. Please check back soon!",
+				Text:      "😔 Rewards are out of stock right now. Your unlock is saved — please check back soon!",
 				ShowAlert: true,
 			})
-		case errors.Is(err, errAlreadyClaimed):
-			// Lost a race with a duplicate tap — their single issued card
-			// is still safe in the DB and viewable via My Progress.
+		case errors.Is(err, errNoUnlocks):
+			// Lost a race with a duplicate tap — the unlock was already spent
+			// by the other flow; the card is safe in the DB and viewable via My Progress.
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-				Text:      "✅ Already claimed — check 📊 My Progress to view your card.",
+				Text:      "✅ Already processed — check 📊 My Progress to view your cards.",
 				ShowAlert: true,
 			})
 		default:
@@ -688,6 +725,14 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	stockLeft, _ := countAvailableCards()
 
+	// Reward number + any unlocks still waiting (fresh copy = post-commit state)
+	rewardNo := 1
+	remaining := 0
+	if fresh, ferr := getUser(user.Id); ferr == nil {
+		rewardNo = fresh.Claims
+		remaining = unlocksAvailable(len(fresh.ReferredUsers), fresh.Claims, ReferralTarget)
+	}
+
 	_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 		Text: "🎉 Reward unlocked!",
 	})
@@ -695,15 +740,24 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 	// Deliver the card as a branded photo with caption
 	caption := fmt.Sprintf(
 		"🎉 <b>Congratulations, %s!</b>\n\n"+
+			"🏆 <b>Reward #%d</b>\n"+
 			"💳 <b>Card:</b> <code>%s</code>\n"+
 			"⏳ <b>Validity:</b> One-time USE only\n\n"+
 			"📖 <b>How to use:</b>\n%s",
-		esc(user.FirstName), esc(card.Card), esc(getHowtoText()))
+		esc(user.FirstName), rewardNo, esc(card.Card), esc(getHowtoText()))
+	if remaining > 0 {
+		caption += fmt.Sprintf("\n\n🎁 <b>%d more reward(s) ready</b> — tap below to claim!", remaining)
+	}
 
 	claimButtons := [][]gotgbot.InlineKeyboardButton{}
-	if u := getSupportURL(); u != "" {
+	if remaining > 0 {
 		claimButtons = append(claimButtons, []gotgbot.InlineKeyboardButton{
-			{Text: "🆘 Support", Url: u},
+			{Text: "🎁 Claim Next Reward", CallbackData: "claim"},
+		})
+	}
+	if su := getSupportURL(); su != "" {
+		claimButtons = append(claimButtons, []gotgbot.InlineKeyboardButton{
+			{Text: "🆘 Support", Url: su},
 		})
 	}
 	claimButtons = append(claimButtons, []gotgbot.InlineKeyboardButton{
@@ -728,16 +782,20 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		cacheCardImageID(sent)
 	}
 
-	_, _, _ = msg.EditText(b,
-		"🎁 <b>Reward sent above!</b> 👆\n\nKeep it private — tap 📊 My Progress anytime to view it again.",
-		&gotgbot.EditMessageTextOpts{
-			ParseMode:   "HTML",
-			ReplyMarkup: claimKeyboard,
-		})
+	doneText := fmt.Sprintf(
+		"🎁 <b>Reward #%d sent above!</b> 👆\n\nKeep it private — tap 📊 My Progress anytime to view your cards.",
+		rewardNo)
+	if remaining > 0 {
+		doneText += fmt.Sprintf("\n\n🎁 <b>%d more reward(s) ready</b> — claim again!", remaining)
+	}
+	_, _, _ = msg.EditText(b, doneText, &gotgbot.EditMessageTextOpts{
+		ParseMode:   "HTML",
+		ReplyMarkup: claimKeyboard,
+	})
 
 	notifyLogChat(b, fmt.Sprintf(
-		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🆔 Card ID: <code>%d</code>\n📦 Stock left: <b>%d</b>",
-		esc(user.FirstName), user.Id, card.ID, stockLeft))
+		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🏆 User reward #: <b>%d</b>\n🆔 Card ID: <code>%d</code>\n📦 Stock left: <b>%d</b>",
+		esc(user.FirstName), user.Id, rewardNo, card.ID, stockLeft))
 
 	return nil
 }

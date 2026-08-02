@@ -18,8 +18,9 @@ type User struct {
 	ReferredUsers []int64
 	JoinedAt      time.Time
 	Banned        bool
-	HasClaimed    bool
-	ClaimedCard   string
+	Claims        int    // rewards collected so far (one per referral target reached)
+	HasClaimed    bool   // mirror of Claims > 0 (kept for quick stats)
+	ClaimedCard   string // most recently issued card (full history lives in the cards table)
 }
 
 // Card statuses
@@ -41,8 +42,30 @@ type Card struct {
 // errNoStock is returned by issueCard when the stock is empty.
 var errNoStock = errors.New("no cards left in stock")
 
-// errAlreadyClaimed is returned by issueCard when the user already holds a card.
-var errAlreadyClaimed = errors.New("user already claimed a card")
+// errNoUnlocks is returned by issueCard when the user has no unlocked rewards
+// waiting (earned rewards = referrals / target, already-collected = Claims).
+var errNoUnlocks = errors.New("no unlocked rewards available")
+
+// unlocksAvailable returns how many rewards the user can still collect:
+// every ReferralTarget referrals unlock exactly one card.
+func unlocksAvailable(referrals, claims, target int) int {
+	if target <= 0 {
+		return 0
+	}
+	earned := referrals / target
+	if earned > claims {
+		return earned - claims
+	}
+	return 0
+}
+
+// nextRewardIn returns how many more referrals are needed for the next card.
+func nextRewardIn(referrals, target int) int {
+	if target <= 0 {
+		return 0
+	}
+	return target - referrals%target
+}
 
 var db *sql.DB
 
@@ -55,6 +78,7 @@ CREATE TABLE IF NOT EXISTS users (
     referred_users TEXT    NOT NULL DEFAULT '[]',
     joined_at      INTEGER NOT NULL DEFAULT 0,
     banned         INTEGER NOT NULL DEFAULT 0,
+    claims         INTEGER NOT NULL DEFAULT 0,
     has_claimed    INTEGER NOT NULL DEFAULT 0,
     claimed_card   TEXT    NOT NULL DEFAULT ''
 );
@@ -85,6 +109,15 @@ var settingsMigrations = []string{
 	`ALTER TABLE settings ADD COLUMN howto_text TEXT NOT NULL DEFAULT ''`,
 }
 
+// userMigrations brings older user tables to the repeat-reward model:
+// a claims counter, seeded from the legacy single-claim flag.
+var userMigrations = []string{
+	`ALTER TABLE users ADD COLUMN claims INTEGER NOT NULL DEFAULT 0`,
+}
+
+// userDataMigrations runs guarded data fixes after column migrations.
+const userClaimsBackfill = `UPDATE users SET claims = 1 WHERE has_claimed = 1 AND claims = 0`
+
 // initDB opens (creating if needed) the local SQLite database and ensures the schema.
 func initDB(path string) error {
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
@@ -106,6 +139,14 @@ func initDB(path string) error {
 	for _, m := range settingsMigrations {
 		_, _ = db.Exec(m) // duplicate-column errors are expected, ignored
 	}
+	for _, m := range userMigrations {
+		_, _ = db.Exec(m) // duplicate-column errors are expected, ignored
+	}
+	// Backfill: users who claimed under the legacy once-per-user model
+	// already spent one unlock.
+	if _, err = db.Exec(userClaimsBackfill); err != nil {
+		return fmt.Errorf("failed to backfill claims: %v", err)
+	}
 	return nil
 }
 
@@ -122,7 +163,7 @@ func scanUser(s scanner) (*User, error) {
 	var banned, hasClaimed int
 
 	err := s.Scan(&u.ID, &u.Name, &u.Username, &u.Referrer, &refJSON,
-		&joined, &banned, &hasClaimed, &u.ClaimedCard)
+		&joined, &banned, &u.Claims, &hasClaimed, &u.ClaimedCard)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +193,7 @@ func scanCard(s scanner) (*Card, error) {
 	return c, nil
 }
 
-const userCols = "id, name, username, referrer, referred_users, joined_at, banned, has_claimed, claimed_card"
+const userCols = "id, name, username, referrer, referred_users, joined_at, banned, claims, has_claimed, claimed_card"
 const cardCols = "id, code, status, created_at, claimed_by, claimed_at"
 
 // ---------- Users ----------
@@ -291,9 +332,10 @@ func setUserBanned(userID int64, banned bool) error {
 	return nil
 }
 
-// resetUserClaim clears a user's claim so they can claim a new reward.
+// resetUserClaim clears a user's spent claims so every reward their
+// referrals have earned becomes collectable again (admin tool).
 func resetUserClaim(userID int64) error {
-	res, err := db.Exec("UPDATE users SET has_claimed = 0, claimed_card = '' WHERE id = ?", userID)
+	res, err := db.Exec("UPDATE users SET claims = 0, has_claimed = 0, claimed_card = '' WHERE id = ?", userID)
 	if err != nil {
 		return fmt.Errorf("failed to reset claim for user %d: %v", userID, err)
 	}
@@ -402,42 +444,57 @@ func countClaimedCards() (int64, error) {
 	return n, err
 }
 
-// issueCard atomically grants exactly ONE card to a user.
+// issueCard atomically grants ONE unlocked reward card to a user.
+//
+// Reward model: every `target` referrals unlock exactly one card, repeatable
+// without a lifetime cap (user's example: target 5 → 25 referrals = 5 cards).
+// A physical card code is still issued exactly once, system-wide, forever.
 //
 // Hard guarantees, enforced by conditional writes inside a single transaction:
 //   - the same card can never be issued twice (card-side gate),
-//   - a user can never receive more than one card, even across concurrent
-//     double-taps/devices (user-side gate),
-//   - if the stock is empty the user's flag is rolled back, so nothing gets stuck.
+//   - a user never collects more cards than unlocks earned, even across
+//     concurrent double-taps/devices (optimistic user-side gate),
+//   - if the stock is empty nothing is spent — the unlock stays available
+//     so the user can claim after a restock.
 //
-// Returns errNoStock when the stock is empty and errAlreadyClaimed when the
-// user already holds a card.
-func issueCard(userID int64) (*Card, error) {
+// Returns errNoStock when the stock is empty and errNoUnlocks when every
+// earned reward has already been collected.
+func issueCard(userID int64, target int) (*Card, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to start transaction: %v", err)
 	}
 	defer tx.Rollback()
 
-	// 1) Per-user gate: exactly one flow can flip has_claimed 0 -> 1.
-	res, err := tx.Exec("UPDATE users SET has_claimed = 1 WHERE id = ? AND has_claimed = 0", userID)
+	// 1) Load the user's referral count and spent claims.
+	var refJSON string
+	var claims int
+	err = tx.QueryRow("SELECT referred_users, claims FROM users WHERE id = ?", userID).Scan(&refJSON, &claims)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("user with ID %d does not exist", userID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to check user: %v", err)
+	}
+	var referrals []int64
+	if err = json.Unmarshal([]byte(refJSON), &referrals); err != nil {
+		return nil, fmt.Errorf("failed to decode referrals for %d: %v", userID, err)
+	}
+	if unlocksAvailable(len(referrals), claims, target) <= 0 {
+		return nil, errNoUnlocks
+	}
+
+	// 2) Per-user gate: exactly one concurrent flow can spend one unlock
+	//    (claims is only incremented from the value this flow observed).
+	res, err := tx.Exec("UPDATE users SET claims = claims + 1, has_claimed = 1 WHERE id = ? AND claims = ?", userID, claims)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lock user claim: %v", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		// Either the user doesn't exist or already claimed — tell them apart.
-		var claimed int
-		serr := tx.QueryRow("SELECT has_claimed FROM users WHERE id = ?", userID).Scan(&claimed)
-		if serr == sql.ErrNoRows {
-			return nil, fmt.Errorf("user with ID %d does not exist", userID)
-		}
-		if serr != nil {
-			return nil, fmt.Errorf("failed to check user: %v", serr)
-		}
-		return nil, errAlreadyClaimed
+		return nil, errNoUnlocks // lost the race — state changed under us
 	}
 
-	// 2) Oldest available card.
+	// 3) Oldest available card.
 	var (
 		cardID  int64
 		code    string
@@ -449,12 +506,12 @@ func issueCard(userID int64) (*Card, error) {
 	).Scan(&cardID, &code, &created)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, errNoStock
+			return nil, errNoStock // rollback also un-spends the unlock
 		}
 		return nil, fmt.Errorf("failed to fetch card: %v", err)
 	}
 
-	// 3) Per-card gate: exactly one flow can flip available -> claimed.
+	// 4) Per-card gate: exactly one flow can flip available -> claimed.
 	now := time.Now().Unix()
 	res, err = tx.Exec(
 		"UPDATE cards SET status = ?, claimed_by = ?, claimed_at = ? WHERE id = ? AND status = ?",
@@ -467,8 +524,8 @@ func issueCard(userID int64) (*Card, error) {
 		return nil, errNoStock // lost the race — behaves like empty stock for this attempt
 	}
 
-	// 4) Record the issued card on the user in the SAME transaction, so the
-	//    card can never be "lost" between claiming and delivery.
+	// 5) Mirror the latest issued card on the user in the SAME transaction,
+	//    so a card can never be "lost" between claiming and delivery.
 	if _, err = tx.Exec("UPDATE users SET claimed_card = ? WHERE id = ?", code, userID); err != nil {
 		return nil, fmt.Errorf("failed to record claimed card: %v", err)
 	}
@@ -488,10 +545,32 @@ func issueCard(userID int64) (*Card, error) {
 	}, nil
 }
 
+// getUserCards returns the cards a user has collected, most recent first.
+func getUserCards(userID int64, limit int64) ([]Card, error) {
+	rows, err := db.Query(
+		"SELECT "+cardCols+" FROM cards WHERE claimed_by = ? ORDER BY claimed_at DESC, id DESC LIMIT ?",
+		userID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve user cards: %v", err)
+	}
+	defer rows.Close()
+
+	var cards []Card
+	for rows.Next() {
+		c, err := scanCard(rows)
+		if err != nil {
+			return nil, err
+		}
+		cards = append(cards, *c)
+	}
+	return cards, rows.Err()
+}
+
 // getRecentClaims returns the latest claimed cards (most recent first).
 func getRecentClaims(limit int64) ([]Card, error) {
 	rows, err := db.Query(
-		"SELECT "+cardCols+" FROM cards WHERE status = ? ORDER BY claimed_at DESC LIMIT ?",
+		"SELECT "+cardCols+" FROM cards WHERE status = ? ORDER BY claimed_at DESC, id DESC LIMIT ?",
 		CardClaimed, limit,
 	)
 	if err != nil {

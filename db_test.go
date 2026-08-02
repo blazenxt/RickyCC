@@ -18,6 +18,27 @@ func setupTestDB(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 }
 
+// fakeReferredID hands out unique IDs for seeded (fake) referred users.
+var fakeReferredID int64 = 900000
+
+// seedReferrals registers n referred users under referrerID.
+func seedReferrals(t *testing.T, referrerID int64, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		fakeReferredID++
+		if err := referUser(referrerID, User{ID: fakeReferredID, Name: "F"}); err != nil {
+			t.Fatalf("seedReferrals(%d, %d): %v", referrerID, n, err)
+		}
+	}
+}
+
+func addStock(t *testing.T, codes ...string) {
+	t.Helper()
+	if _, _, err := addCards(codes); err != nil {
+		t.Fatalf("addCards: %v", err)
+	}
+}
+
 func TestUserAndReferral(t *testing.T) {
 	setupTestDB(t)
 
@@ -68,15 +89,49 @@ func TestCardDedupImport(t *testing.T) {
 	}
 }
 
-func TestIssueOnceGuarantee(t *testing.T) {
-	setupTestDB(t)
-
-	if _, _, err := addCards([]string{"CARD-1", "CARD-2"}); err != nil {
-		t.Fatalf("addCards: %v", err)
+func TestUnlockMath(t *testing.T) {
+	cases := []struct {
+		refs, claims, target, want int
+	}{
+		{0, 0, 5, 0},
+		{4, 0, 5, 0},
+		{5, 0, 5, 1},   // 5 referrals = 1 card
+		{9, 0, 5, 1},   // still 1
+		{10, 0, 5, 2},  // 10 = 2
+		{25, 0, 5, 5},  // 5n = 5 cards (the user's exact example)
+		{25, 5, 5, 0},  // all collected
+		{25, 2, 5, 3},  // 3 still claimable
+		{10, 20, 5, 0}, // never negative
+		{10, 0, 0, 0},  // disabled target = nothing earned
+	}
+	for _, c := range cases {
+		if got := unlocksAvailable(c.refs, c.claims, c.target); got != c.want {
+			t.Fatalf("unlocksAvailable(%d, %d, %d) = %d, want %d", c.refs, c.claims, c.target, got, c.want)
+		}
 	}
 
+	if got := nextRewardIn(0, 5); got != 5 {
+		t.Fatalf("nextRewardIn(0, 5) = %d, want 5", got)
+	}
+	if got := nextRewardIn(5, 5); got != 5 {
+		t.Fatalf("nextRewardIn(5, 5) = %d, want 5 (next batch)", got)
+	}
+	if got := nextRewardIn(7, 5); got != 3 {
+		t.Fatalf("nextRewardIn(7, 5) = %d, want 3", got)
+	}
+	if got := nextRewardIn(7, 0); got != 0 {
+		t.Fatalf("nextRewardIn(7, 0) = %d, want 0", got)
+	}
+}
+
+func TestRepeatIssuePerNReferrals(t *testing.T) {
+	setupTestDB(t)
+	ReferralTarget = 5
+
+	addStock(t, "CARD-1", "CARD-2", "CARD-3", "CARD-4")
+
 	// Unregistered users can't be issued cards
-	if _, err := issueCard(99); err == nil || errors.Is(err, errAlreadyClaimed) {
+	if _, err := issueCard(99, ReferralTarget); err == nil || errors.Is(err, errNoUnlocks) || errors.Is(err, errNoStock) {
 		t.Fatalf("expected user-not-found error, got %v", err)
 	}
 
@@ -86,8 +141,14 @@ func TestIssueOnceGuarantee(t *testing.T) {
 		}
 	}
 
-	// First issue: oldest card first, recorded on the user
-	card, err := issueCard(42)
+	// Zero referrals = zero unlocks
+	if _, err := issueCard(42, ReferralTarget); !errors.Is(err, errNoUnlocks) {
+		t.Fatalf("expected errNoUnlocks without referrals, got %v", err)
+	}
+
+	// 5 referrals -> 1 unlock -> CARD-1
+	seedReferrals(t, 42, 5)
+	card, err := issueCard(42, ReferralTarget)
 	if err != nil {
 		t.Fatalf("issueCard: %v", err)
 	}
@@ -95,112 +156,225 @@ func TestIssueOnceGuarantee(t *testing.T) {
 		t.Fatalf("issue metadata wrong: %+v", card)
 	}
 	u, _ := getUser(42)
-	if !u.HasClaimed || u.ClaimedCard != "CARD-1" {
-		t.Fatalf("user 42 should hold CARD-1, got %+v", u)
+	if u.Claims != 1 || !u.HasClaimed || u.ClaimedCard != "CARD-1" {
+		t.Fatalf("user 42 should hold CARD-1 with claims=1, got %+v", u)
 	}
 
-	// ONE CARD PER USER: second issue for same user is rejected
-	if _, err = issueCard(42); !errors.Is(err, errAlreadyClaimed) {
-		t.Fatalf("expected errAlreadyClaimed, got %v", err)
+	// Second attempt with no fresh unlocks is rejected
+	if _, err = issueCard(42, ReferralTarget); !errors.Is(err, errNoUnlocks) {
+		t.Fatalf("expected errNoUnlocks on second claim, got %v", err)
 	}
 
-	// Other users still get their own (different) card
-	card2, err := issueCard(43)
+	// 10 referrals total -> another unlock -> a DIFFERENT card (CARD-2)
+	seedReferrals(t, 42, 5)
+	card2, err := issueCard(42, ReferralTarget)
 	if err != nil || card2.Card != "CARD-2" {
-		t.Fatalf("expected CARD-2 for user 43, got %v / %+v", err, card2)
+		t.Fatalf("expected CARD-2 for 10 referrals, got %v / %+v", err, card2)
 	}
-	if avail, _ := countAvailableCards(); avail != 0 {
-		t.Fatalf("stock should be empty, got %d", avail)
+	if card2.Card == card.Card {
+		t.Fatal("repeat reward must be a different physical card code")
+	}
+	if u, _ = getUser(42); u.Claims != 2 {
+		t.Fatalf("user 42 claims should be 2, got %d", u.Claims)
 	}
 
-	// OUT OF STOCK → flag must roll back so the user can claim after restock
-	if _, err = issueCard(44); !errors.Is(err, errNoStock) {
+	// History is queryable per user
+	own, err := getUserCards(42, 10)
+	if err != nil || len(own) != 2 || own[0].Card != "CARD-2" || own[1].Card != "CARD-1" {
+		t.Fatalf("getUserCards wrong: %v %+v", err, own)
+	}
+
+	// Not enough referrals -> nothing
+	seedReferrals(t, 43, 3)
+	if _, err := issueCard(43, ReferralTarget); !errors.Is(err, errNoUnlocks) {
+		t.Fatalf("expected errNoUnlocks for 3/5 referrals, got %v", err)
+	}
+
+	// Saved unlocks can be burned one by one (10 refs = 2 unlocks)
+	seedReferrals(t, 44, 10)
+	c1, err := issueCard(44, ReferralTarget)
+	if err != nil {
+		t.Fatalf("first claim of 2 unlocks: %v", err)
+	}
+	c2, err := issueCard(44, ReferralTarget)
+	if err != nil {
+		t.Fatalf("second claim of 2 unlocks: %v", err)
+	}
+	if c1.Card == c2.Card {
+		t.Fatal("back-to-back claims must yield distinct cards")
+	}
+	if _, err = issueCard(44, ReferralTarget); !errors.Is(err, errNoUnlocks) {
+		t.Fatalf("expected errNoUnlocks after burning both unlocks, got %v", err)
+	}
+
+	// OUT OF STOCK → unlock must NOT be spent (claim works after restock)
+	seedReferrals(t, 43, 7) // 10 refs total = 2 unlocks; stock is empty now
+	if _, err = issueCard(43, ReferralTarget); !errors.Is(err, errNoStock) {
 		t.Fatalf("expected errNoStock, got %v", err)
 	}
-	u, _ = getUser(44)
-	if u.HasClaimed {
-		t.Fatal("out-of-stock must not leave user flagged as claimed")
+	if u, _ := getUser(43); u.Claims != 0 || u.HasClaimed {
+		t.Fatal("out-of-stock must not spend unlocks or flag the user")
+	}
+	addStock(t, "CARD-5", "CARD-6")
+	if _, err = issueCard(43, ReferralTarget); err != nil {
+		t.Fatalf("restock claim 1: %v", err)
+	}
+	if _, err = issueCard(43, ReferralTarget); err != nil {
+		t.Fatalf("restock claim 2: %v", err)
+	}
+	if u, _ := getUser(43); u.Claims != 2 {
+		t.Fatalf("user 43 claims should be 2 after restock, got %d", u.Claims)
 	}
 
-	// Restock → same user can now claim
-	if _, _, err := addCards([]string{"CARD-3"}); err != nil {
-		t.Fatalf("addCards: %v", err)
+	// Admin reset re-enables already-earned unlocks
+	if err := resetUserClaim(43); err != nil {
+		t.Fatalf("resetUserClaim: %v", err)
 	}
-	card3, err := issueCard(44)
-	if err != nil || card3.Card != "CARD-3" {
-		t.Fatalf("restock claim failed: %v / %+v", err, card3)
+	if u, _ := getUser(43); u.Claims != 0 || u.HasClaimed {
+		t.Fatal("reset should clear claims and the mirror flag")
+	}
+	addStock(t, "CARD-7")
+	if _, err = issueCard(43, ReferralTarget); err != nil {
+		t.Fatalf("claim after reset: %v", err)
 	}
 }
 
 func TestIssueConcurrency(t *testing.T) {
 	setupTestDB(t)
+	ReferralTarget = 5
 
-	// 20 users, 5 cards — every user must get at most one card,
-	// and no card may ever land with two users. Ever.
+	// 20 users with one unlock each, only 5 cards — exact guarantees must hold:
+	// every success is a different card, nobody exceeds their earned unlocks.
 	const users, stock = 20, 5
 	var codes []string
 	for i := 0; i < stock; i++ {
 		codes = append(codes, fmt.Sprintf("CARD-%d", i))
 	}
-	if _, _, err := addCards(codes); err != nil {
-		t.Fatalf("addCards: %v", err)
-	}
+	addStock(t, codes...)
 	for i := 0; i < users; i++ {
-		if err := addUser(User{ID: int64(1000 + i), Name: "U"}); err != nil {
+		id := int64(1000 + i)
+		if err := addUser(User{ID: id, Name: "U"}); err != nil {
 			t.Fatalf("addUser: %v", err)
 		}
+		seedReferrals(t, id, 5)
 	}
 
-	type result struct{ card, errText string }
-	results := make(chan result, users)
-	var wg sync.WaitGroup
-	for i := 0; i < users; i++ {
-		wg.Add(1)
-		go func(id int64) {
-			defer wg.Done()
-			c, err := issueCard(id)
-			res := result{}
-			if err == nil {
-				res.card = c.Card
-			} else {
-				res.errText = err.Error()
+	fire := func() []string {
+		results := make(chan string, users)
+		var wg sync.WaitGroup
+		for i := 0; i < users; i++ {
+			wg.Add(1)
+			go func(id int64) {
+				defer wg.Done()
+				if c, err := issueCard(id, ReferralTarget); err == nil {
+					results <- c.Card
+				} else {
+					results <- ""
+				}
+			}(int64(1000 + i))
+		}
+		wg.Wait()
+		close(results)
+
+		got := []string{}
+		for r := range results {
+			if r != "" {
+				got = append(got, r)
 			}
-			results <- res
-		}(int64(1000 + i))
-	}
-	wg.Wait()
-	close(results)
-
-	issued := map[string]int{}
-	succeeded := 0
-	for r := range results {
-		if r.card != "" {
-			succeeded++
-			issued[r.card]++
 		}
+		return got
 	}
-	if succeeded != stock {
-		t.Fatalf("expected exactly %d successful issues, got %d", stock, succeeded)
-	}
-	for code, n := range issued {
-		if n != 1 {
-			t.Fatalf("card %s issued %d times — delivery guarantee broken!", code, n)
+	assertDistinct := func(cards []string, label string) {
+		t.Helper()
+		seen := map[string]bool{}
+		for _, c := range cards {
+			if seen[c] {
+				t.Fatalf("%s: card %s issued twice — delivery guarantee broken!", label, c)
+			}
+			seen[c] = true
 		}
 	}
 
-	// No card left, everyone else must have been told "no stock"
+	// Wave 1: exactly `stock` successes, each card exactly once.
+	wave1 := fire()
+	assertDistinct(wave1, "wave1")
+	if len(wave1) != stock {
+		t.Fatalf("wave1: expected %d successes, got %d", stock, len(wave1))
+	}
 	if avail, _ := countAvailableCards(); avail != 0 {
-		t.Fatalf("stock should be empty, got %d", avail)
+		t.Fatalf("wave1: stock should be empty, got %d", avail)
 	}
 	claims, _ := countClaimedCards()
 	claimers, _ := countClaimedUsers()
 	if claims != int64(stock) || claimers != int64(stock) {
-		t.Fatalf("claimed counts wrong: cards=%d users=%d", claims, claimers)
+		t.Fatalf("wave1: claimed counts wrong: cards=%d users=%d", claims, claimers)
+	}
+
+	// Wave 2: restock 5 → the unlocks of wave-1 losers are STILL valid,
+	// so exactly 5 of them now collect their saved reward.
+	addStock(t, "EXTRA-1", "EXTRA-2", "EXTRA-3", "EXTRA-4", "EXTRA-5")
+	wave2 := fire()
+	assertDistinct(wave2, "wave2")
+	if len(wave2) != 5 {
+		t.Fatalf("wave2: expected 5 successes (saved unlocks), got %d", len(wave2))
+	}
+
+	// Wave 3: restock 10 → remaining 10 users collect too.
+	var rest []string
+	for i := 0; i < 10; i++ {
+		rest = append(rest, fmt.Sprintf("FINAL-%d", i))
+	}
+	addStock(t, rest...)
+	wave3 := fire()
+	assertDistinct(wave3, "wave3")
+	if len(wave3) != 10 {
+		t.Fatalf("wave3: expected 10 successes, got %d", len(wave3))
+	}
+
+	// Now every user holds exactly ONE card for exactly ONE earned unlock.
+	for i := 0; i < users; i++ {
+		u, _ := getUser(int64(1000 + i))
+		if u.Claims != 1 {
+			t.Fatalf("user %d claims=%d, want exactly 1 (one unlock each)", u.ID, u.Claims)
+		}
+	}
+
+	// Wave 4: restock again, but nobody has a fresh unlock — ZERO issues.
+	addStock(t, "LOCKED-1", "LOCKED-2")
+	if wave4 := fire(); len(wave4) != 0 {
+		t.Fatalf("wave4: no unlocks left but cards got issued: %v", wave4)
+	}
+
+	// Wave 5: everyone earns a SECOND unlock (10 refs total) → all 20 can
+	// collect a second, different card.
+	for i := 0; i < users; i++ {
+		seedReferrals(t, int64(1000+i), 5)
+	}
+	var extra []string
+	for i := 0; i < users; i++ {
+		extra = append(extra, fmt.Sprintf("SECOND-%d", i))
+	}
+	addStock(t, extra...)
+	wave5 := fire()
+	assertDistinct(wave5, "wave5")
+	if len(wave5) != users {
+		t.Fatalf("wave5: expected %d successes, got %d", users, len(wave5))
+	}
+	for i := 0; i < users; i++ {
+		u, _ := getUser(int64(1000 + i))
+		if u.Claims != 2 {
+			t.Fatalf("user %d claims=%d, want 2 after second unlock", u.ID, u.Claims)
+		}
+		own, _ := getUserCards(u.ID, 5)
+		if len(own) != 2 || own[0].Card == own[1].Card {
+			t.Fatalf("user %d history wrong: %+v", u.ID, own)
+		}
 	}
 }
 
 func TestAdminUserActions(t *testing.T) {
 	setupTestDB(t)
+	ReferralTarget = 5
 
 	_ = addUser(User{ID: 1, Name: "Boss"})
 	_ = referUser(1, User{ID: 2, Name: "Friend"})

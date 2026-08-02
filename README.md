@@ -3,9 +3,9 @@
 **Premium Card** is a Telegram bot built around a simple growth funnel:
 
 1. **Force-join** — users must join your channels (supports **2+ channels**) before they can use the bot.
-2. **Refer** — each user gets a personal referral link and must refer **5 friends** (each friend also has to pass the channel check to count).
-3. **Unlock** — after completing the target, the user taps **🎁 Claim Reward** and instantly receives **one reward card** from the stock.
-4. **You stock the rewards** — the owner adds cards with `/addcard`, and the bot hands out **exactly one per user**, atomically, so no card is ever given twice.
+2. **Refer** — each user gets a personal referral link; every **5 friends** they refer (each friend also has to pass the channel check to count) unlock **one reward card**.
+3. **Unlock, repeatedly** — there is no lifetime cap: `n` referrals = 1 card, `2n` = 2 cards, `5n` = 5 cards (e.g. 25 referrals at target 5 → 5 **different** cards). Users tap **🎁 Claim Reward** to collect each unlocked card, one per tap.
+4. **You stock the rewards** — the owner adds cards with `/addcard`; the bot issues every physical card **exactly once, system-wide, atomically**, so no card code is ever given to two users. If the stock runs out, unlocked rewards stay saved for after the restock.
 
 > ⚠️ Only distribute cards you are legally allowed to share (gift cards, vouchers, promo codes, etc.). The authors take no responsibility for misuse.
 
@@ -17,13 +17,14 @@
   - 🆘 **Support button** under every delivery — link set from the panel (`https://t.me/...` or `off`)
   - 📖 **How-to-use text** — fully editable from the panel (`default` restores)
 - **Multi-channel force subscribe** — comma-separated channel list, one join prompt listing every missing channel, referral payload survives the "Try again" flow.
-- **Referral tracking with progress bar** — users see `X/5` progress everywhere and get a milestone ping on every successful referral.
-- **Atomic reward claims** — `FindOneAndUpdate` guarantees one card per card, one claim per user; stock runs out gracefully ("come back soon").
+- **Repeat rewards per N referrals** — every time a user completes the referral target a new card unlocks; pending unlocks never expire and survivors of an out-of-stock wave collect after the restock.
+- **Referral tracking with progress bar** — users always see progress toward their *next* card and get a milestone ping every time a new card unlocks.
+- **Atomic reward claims** — conditional writes inside a single transaction guarantee: one physical card per issue, never more cards than earned unlocks, nothing spent when the stock is empty.
 - **Privacy hardened** — users can only view their own info/progress (owner exempt).
 - **Zero external services** — embedded **SQLite** database, just a single `bot.db` file. No MongoDB, no hosted DB to configure.
 - **Full admin panel (`/admin`)** — interactive inline-keyboard UI:
   - 📊 **Dashboard** — users / banned / claimed / stock at a glance
-  - 👥 **User management** — search any user, newest users list, **ban/unban**, **reset claim**, **delete user** (auto-unlinks from referrer)
+  - 👥 **User management** — search any user, newest users list, **ban/unban**, **reset claims**, **delete user** (auto-unlinks from referrer)
   - 🎟️ **Card stock** — bulk add with duplicate-skip, recent claims history, purge claimed records
   - 🛠 **Live settings** (persisted in the local DB, no restart needed):
     - 📢 **Force-join setup** — add/remove/clear multiple channels from the panel, bot verifies admin access and prepares invite links automatically
@@ -43,7 +44,7 @@
 
 ### Users
 - `/start` — start the bot, pass the channel check, get your referral link.
-- `/progress` — check your referral progress (`X/5`).
+- `/progress` — referrals, rewards claimed, progress to your next card, and your latest claimed cards.
 - `/info` — view your account details (self only).
 
 ### Owner only
@@ -101,7 +102,7 @@ go build -o premiumcard .
 
 ## Data model (local SQLite — `bot.db`)
 
-**`users`** — telegram ID, name, referrer, referred user IDs, join date, ban & claim status.
+**`users`** — telegram ID, name, referrer, referred user IDs, join date, ban status, rewards-claimed counter (`claims`).
 **`cards`** — card text, status (`available`/`claimed`), who claimed it and when.
 **`settings`** — runtime config: force-join channels, log chat, referral target, claims pause, admin list.
 
