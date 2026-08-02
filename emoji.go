@@ -282,3 +282,86 @@ func validateEmojiIDs(b *gotgbot.Bot, chatID int64, candidate map[string]string)
 	log.Printf("custom emoji validation: %d bad of %d", len(bad), len(slots))
 	return bad
 }
+
+// premiumizeButtons upgrades inline buttons to the premium look introduced
+// in Bot API 9.4: when a button label STARTS with a registry emoji whose
+// slot is mapped to a numeric custom emoji ID, that glyph moves from the
+// text into the button's IconCustomEmojiId and the duplicate is trimmed
+// from the label. Everything else — plain-emoji mappings, unmapped slots,
+// non-emoji text — is left untouched, falling back to the classic
+// standard-emoji button exactly like before. A button whose label is ONLY
+// the emoji is never stripped (Telegram needs visible label text).
+// In-place; returns kb for chaining.
+func premiumizeButtons(kb *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboardMarkup {
+	if kb == nil {
+		return kb
+	}
+	mapping := getEmojiIDs()
+	if len(mapping) == 0 {
+		return kb
+	}
+
+	defToID := map[string]string{}
+	for slot, v := range mapping {
+		if def, ok := iconDefaults[slot]; ok && def != "" && isEmojiID(v) {
+			defToID[def] = v
+		}
+	}
+	if len(defToID) == 0 {
+		return kb
+	}
+
+	for ri := range kb.InlineKeyboard {
+		for bi := range kb.InlineKeyboard[ri] {
+			btn := &kb.InlineKeyboard[ri][bi]
+			if btn.IconCustomEmojiId != "" {
+				continue // already has an icon — never double-set
+			}
+			for def, id := range defToID {
+				if !strings.HasPrefix(btn.Text, def) {
+					continue
+				}
+				if rest := strings.TrimSpace(btn.Text[len(def):]); rest != "" {
+					btn.Text = rest
+					btn.IconCustomEmojiId = id
+				}
+				break
+			}
+		}
+	}
+	return kb
+}
+
+// preloadPremiumEmojiSet auto-loads the curated premium set on boot, but
+// only when (a) NO custom mapping exists yet — an owner's hand-tuned slots
+// are never stomped — and (b) a live probe proves this bot may actually
+// send those public-pack custom emoji (Fragment extra username or a Premium
+// owner). Without the probe, a bot lacking rights would wedge every
+// message send. The probe message is deleted immediately.
+func preloadPremiumEmojiSet(b *gotgbot.Bot, ownerID int64) {
+	if n := len(getEmojiIDs()); n > 0 {
+		log.Printf("premium emoji: %d custom slot(s) already configured — boot pre-load skipped", n)
+		return
+	}
+	if ownerID == 0 {
+		log.Printf("premium emoji pre-load skipped: OWNER_ID not set (use /admin → ⚡ Load Premium Set anytime)")
+		return
+	}
+
+	var sb strings.Builder
+	for _, slot := range []string{"party", "robot", "gift"} {
+		fmt.Fprintf(&sb, "<tg-emoji emoji-id=\"%s\">%s</tg-emoji> ", premiumEmojiDefaults[slot], iconDefaults[slot])
+	}
+	probe, err := b.SendMessage(ownerID, sb.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	if err != nil {
+		log.Printf("premium emoji pre-load skipped: bot can't send public custom emoji yet (%v) — needs a Fragment username / Premium owner, then /admin → ⚡ Load Premium Set", err)
+		return
+	}
+	_, _ = b.DeleteMessage(ownerID, probe.MessageId, nil)
+
+	if err := setEmojiIDs(premiumEmojiDefaults); err != nil {
+		log.Printf("premium emoji pre-load failed: %v", err)
+		return
+	}
+	log.Printf("premium emoji set pre-loaded on boot: %d slots", len(premiumEmojiDefaults))
+}

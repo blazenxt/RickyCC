@@ -57,7 +57,7 @@ func admPanelText() string {
 }
 
 func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
-	return gotgbot.InlineKeyboardMarkup{
+	m := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{admBtn("📊 Dashboard", "admp.dash")},
 			{admBtn("👥 Users", "admp.users"), admBtn("🎟️ Cards", "admp.codes")},
@@ -65,13 +65,16 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 			{admBtn("👑 Admins", "admp.admins"), admBtn("❌ Close", "admp.close")},
 		},
 	}
+	return *premiumizeButtons(&m)
 }
 
-// admEdit is a small helper to swap the panel view.
+// admEdit is a small helper to swap the panel view. Text and BUTTONS both
+// pass through the premium-emoji layer, so every panel screen inherits the
+// owner's custom set automatically.
 func admEdit(b *gotgbot.Bot, msg *gotgbot.Message, text string, kb gotgbot.InlineKeyboardMarkup) {
 	_, _, err := msg.EditText(b, premiumize(text), &gotgbot.EditMessageTextOpts{
 		ParseMode:   "HTML",
-		ReplyMarkup: kb,
+		ReplyMarkup: *premiumizeButtons(&kb),
 	})
 	if err != nil {
 		log.Printf("admin panel edit failed: %v", err)
@@ -806,12 +809,12 @@ func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 		added, skipped, total),
 		&gotgbot.SendMessageOpts{
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			ReplyMarkup: *premiumizeButtons(&gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 					{admBtn("➕ Add More", "admc.addcodes")},
 					{admBtn("⚙️ Panel", "admp.home")},
 				},
-			},
+			}),
 		})
 	return handlers.EndConversation()
 }
@@ -824,11 +827,12 @@ func adminCancel(b *gotgbot.Bot, ctx *ext.Context) error {
 // ---------- Conversations: bot settings ----------
 
 func admSettingsBackBtn() gotgbot.InlineKeyboardMarkup {
-	return gotgbot.InlineKeyboardMarkup{
+	m := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{admBtn("🛠 Settings", "admp.settings")},
 		},
 	}
+	return *premiumizeButtons(&m)
 }
 
 // adminLogSetStart asks the owner for the log chat ID.

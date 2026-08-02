@@ -1,8 +1,11 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
 func TestIconDefaultsAndCustom(t *testing.T) {
@@ -45,6 +48,73 @@ func TestIconDefaultsAndCustom(t *testing.T) {
 	loadConfig(0, nil)
 	if len(getEmojiIDs()) != 0 {
 		t.Fatal("cleared mapping should stay cleared after reload")
+	}
+}
+
+// Buttons (Bot API 9.4+): a registry emoji at the START of a label whose slot
+// maps to a NUMERIC custom ID must move into IconCustomEmojiId, with the
+// duplicate trimmed from the text. Everything else stays classic.
+func TestPremiumizeButtons(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+
+	mk := func() *gotgbot.InlineKeyboardMarkup {
+		return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+			{Text: "⭐ Rate us", CallbackData: "a"},
+			{Text: "🎁 Claim Reward", CallbackData: "b"},
+			{Text: "⭐", CallbackData: "c"}, // label is ONLY the emoji
+			{Text: "Plain label", CallbackData: "d"},
+		}}}
+	}
+
+	// No mapping: completely untouched.
+	kb := mk()
+	premiumizeButtons(kb)
+	if kb.InlineKeyboard[0][0].IconCustomEmojiId != "" || kb.InlineKeyboard[0][0].Text != "⭐ Rate us" {
+		t.Fatalf("no mapping must leave buttons untouched: %+v", kb.InlineKeyboard[0][0])
+	}
+
+	// star → numeric ID converts; gift → plain emoji does NOT.
+	if err := setEmojiIDs(map[string]string{"star": "5511223344556677889", "gift": "🎉"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+	kb = mk()
+	premiumizeButtons(kb)
+	if b := kb.InlineKeyboard[0][0]; b.IconCustomEmojiId != "5511223344556677889" || b.Text != "Rate us" {
+		t.Fatalf("star button not converted: %+v", b)
+	}
+	if b := kb.InlineKeyboard[0][1]; b.IconCustomEmojiId != "" || b.Text != "🎁 Claim Reward" {
+		t.Fatalf("plain-emoji mapping must not touch buttons: %+v", b)
+	}
+	if b := kb.InlineKeyboard[0][2]; b.IconCustomEmojiId != "" || b.Text != "⭐" {
+		t.Fatalf("label-only emoji must never be stripped: %+v", b)
+	}
+	if b := kb.InlineKeyboard[0][3]; b.Text != "Plain label" || b.IconCustomEmojiId != "" {
+		t.Fatalf("non-emoji label changed: %+v", b)
+	}
+
+	// Idempotent — a second pass must not strip more text or re-set icons.
+	before := *kb
+	premiumizeButtons(kb)
+	if !reflect.DeepEqual(*kb, before) {
+		t.Fatalf("premiumizeButtons not idempotent:\n%+v\n%+v", before, *kb)
+	}
+
+	// Numeric mapping on gift converts it too, trimming just the glyph.
+	if err := setEmojiIDs(map[string]string{"star": "5511223344556677889", "gift": "5500000000000000099"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+	kb = mk()
+	premiumizeButtons(kb)
+	if b := kb.InlineKeyboard[0][1]; b.IconCustomEmojiId != "5500000000000000099" || b.Text != "Claim Reward" {
+		t.Fatalf("gift button not converted: %+v", b)
+	}
+
+	// Empty keyboard / nil markup: no panic, no change.
+	var empty gotgbot.InlineKeyboardMarkup
+	premiumizeButtons(&empty)
+	if premiumizeButtons(nil) != nil {
+		t.Fatal("nil markup should stay nil")
 	}
 }
 

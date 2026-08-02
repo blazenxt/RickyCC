@@ -51,8 +51,8 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 - **🎨 Custom emoji icons** — restyle the bot's icons across every message body and the delivery caption: 30+ named slots (`card`, `party`, `trophy`, `gift`, `validity`, …). Two ways, set from the panel:
   - **any public emoji** (`card=🔥`) — works instantly, zero restrictions
   - **premium custom emoji IDs** (`card=5402…`) — live-validated with a test-send; works from bot-owned packs, or **any public pack** when the bot has an extra username bought on Fragment
-  - **⚡ one-tap Premium Set** — a curated **39-icon premium look** (🎉🥇💎👑📌🔄…) loads with a single button and replaces **every** Unicode icon across all message bodies (a segment-aware `premiumize()` pass sweeps up even hardcoded literals, with zero double-wrapping). A built-in **live probe** first verifies the bot may send public custom emoji, so it can never break message delivery. Buttons stay standard — Telegram limitation, intentional.
-  - Buttons automatically keep standard fallbacks (Telegram doesn't allow custom emoji there), and a send-failure safety net downgrades any message back to standard icons.
+  - **⚡ Premium Set, auto-loaded on boot** — a curated **39-icon premium look** (🎉🥇💎👑📌🔄…) is applied automatically when the bot starts on a fresh deploy (or one tap in the panel anytime) and replaces **every** Unicode icon across all message bodies — including the captcha page (a segment-aware `premiumize()` pass sweeps up even hardcoded literals, with zero double-wrapping). A built-in **live probe** first verifies the bot may send public custom emoji, so it can never break message delivery; an existing hand-made mapping is never overwritten.
+  - **Premium icons on buttons too (Bot API 9.4+)** — button labels that begin with a mapped emoji move it into the button's `icon_custom_emoji_id`, so the Home/Claim/Refer/Admin buttons wear the premium look as well. Works when the bot has a Fragment-bought extra username **or** the owner has Telegram Premium; unmapped/plain-emoji labels keep their standard look automatically, and a send-failure safety net downgrades any message body back to standard icons.
 - **Multi-channel force subscribe** — comma-separated channel list, one join prompt listing every missing channel, referral payload survives the "Try again" flow.
 - **Human-verification captcha** — after the channel check, new users solve a one-tap captcha before they can register. Challenges **rotate between 4 types** (🧮 math, 🔢 sequences, 👀 emoji counting, 🕵️ odd-one-out emoji/words) so scripts can't pattern-match a fixed format; a fresh challenge on every wrong tap, 3 tries per challenge, **15-minute lockout after 3 failed challenges**, 30-minute challenge expiry, referral payload held server-side (button data only carries the tapped index). Scripted referral farms are stopped cold.
 - **Repeat rewards per N referrals** — every time a user completes the referral target a new card unlocks; pending unlocks never expire and survivors of an out-of-stock wave collect after the restock.
@@ -104,7 +104,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 ## Setup
 
 ### Prerequisites
-- **Go** 1.23+ (or Docker) — _no external database needed, SQLite is embedded_
+- **Go** 1.24+ (or Docker) — _no external database needed, SQLite is embedded_
 - A **Telegram bot token** from [@BotFather](https://t.me/BotFather)
 - Your Telegram user ID (use [@userinfobot](https://t.me/userinfobot))
 - Optionally: channel IDs to force-join (can also be set later from the admin panel)

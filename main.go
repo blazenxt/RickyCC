@@ -111,6 +111,12 @@ func main() {
 	log.Printf("Database ready (SQLite: %s)", dbPath)
 	loadConfig(envLogChatID, envFsubIDs)
 
+	// Fresh deploy + bot has emoji rights (Fragment username / Premium
+	// owner): light up the whole UI — message icons AND button icons — with
+	// the curated premium set automatically. No-op when the owner already
+	// configured slots or the probe fails.
+	preloadPremiumEmojiSet(bot, OwnerID)
+
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
 			log.Println("an error occurred while handling update:", err.Error())
@@ -285,7 +291,7 @@ func progressBar(done, target int) string {
 // mainKeyboard is the primary inline keyboard shown on /start and home.
 func mainKeyboard(b *gotgbot.Bot, userId int64) gotgbot.InlineKeyboardMarkup {
 	referUrl := fmt.Sprintf("https://t.me/%s?start=%d", b.User.Username, userId)
-	return gotgbot.InlineKeyboardMarkup{
+	m := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{
 				{
@@ -311,10 +317,11 @@ func mainKeyboard(b *gotgbot.Bot, userId int64) gotgbot.InlineKeyboardMarkup {
 			},
 		},
 	}
+	return *premiumizeButtons(&m)
 }
 
 func homeKeyboard() gotgbot.InlineKeyboardMarkup {
-	return gotgbot.InlineKeyboardMarkup{
+	m := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{
 				{
@@ -324,6 +331,7 @@ func homeKeyboard() gotgbot.InlineKeyboardMarkup {
 			},
 		},
 	}
+	return *premiumizeButtons(&m)
 }
 
 func welcomeText(firstName string, u *User, isNew bool) string {
@@ -849,6 +857,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		{Text: "🏠 Home", CallbackData: "home"},
 	})
 	claimKeyboard := gotgbot.InlineKeyboardMarkup{InlineKeyboard: claimButtons}
+	premiumizeButtons(&claimKeyboard)
 
 	sent, err := b.SendPhoto(user.Id, cardPhotoInput(), &gotgbot.SendPhotoOpts{
 		Caption:     caption,
@@ -1055,6 +1064,7 @@ func broadcast(b *gotgbot.Bot, ctx *ext.Context) error {
 	if reply.ReplyMarkup != nil {
 		button.InlineKeyboard = reply.ReplyMarkup.InlineKeyboard
 	}
+	premiumizeButtons(button) // re-broadcasts get the premium look too
 
 	users, err := getAllUsers()
 	if err != nil {

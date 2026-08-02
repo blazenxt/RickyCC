@@ -152,7 +152,7 @@ func fSub(b *gotgbot.Bot, userId int64, arg string) (bool, error) {
 
 	_, err = b.SendMessage(userId, lockFsubText(), &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
-		ReplyMarkup: &gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+		ReplyMarkup: premiumizeButtons(&gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons}),
 	})
 	if err != nil {
 		log.Printf("Error sending message: %s", err)
@@ -191,7 +191,7 @@ func fsubRetryCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		// "Message is not modified" errors are expected and harmless here.
 		_, _, _ = msg.EditText(b, lockFsubText(), &gotgbot.EditMessageTextOpts{
 			ParseMode:   "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+			ReplyMarkup: *premiumizeButtons(&gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons}),
 		})
 		return nil
 	}

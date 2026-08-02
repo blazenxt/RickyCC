@@ -1,9 +1,9 @@
 module earnify
 
-go 1.23.4
+go 1.24
 
 require (
-	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.32
+	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.35
 	github.com/joho/godotenv v1.5.1
 	modernc.org/sqlite v1.34.5
 )

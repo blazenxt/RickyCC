@@ -1,5 +1,5 @@
 # Stage 1: Builder
-FROM golang:1.23.4-alpine3.20 AS builder
+FROM golang:1.25-alpine3.20 AS builder
 WORKDIR /app
 
 RUN apk add --no-cache git
