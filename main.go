@@ -83,11 +83,8 @@ func main() {
 	WebhookURL = os.Getenv("WEBHOOK_URL")
 	Port = os.Getenv("PORT")
 
-	if err := initDB(dbPath); err != nil {
-		log.Fatalf("Failed to initialise database: %v", err)
-	}
-	log.Printf("Database ready (SQLite: %s)", dbPath)
-	loadConfig(envLogChatID, envFsubIDs)
+	dbFilePath = dbPath
+	backupChatID = envLogChatID
 
 	bot, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
@@ -102,6 +99,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Ephemeral hosts (Railway w/o volume, Heroku, Render free) wipe bot.db on
+	// every redeploy — restore the newest pinned backup from the LOGGER_ID
+	// chat BEFORE the database is opened.
+	maybeRestoreDB(bot, token, envLogChatID, dbPath)
+
+	if err := initDB(dbPath); err != nil {
+		log.Fatalf("Failed to initialise database: %v", err)
+	}
+	log.Printf("Database ready (SQLite: %s)", dbPath)
+	loadConfig(envLogChatID, envFsubIDs)
 
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
@@ -120,6 +128,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCommand("stock", stock))
 	dispatcher.AddHandler(handlers.NewCommand("stats", stats))
 	dispatcher.AddHandler(handlers.NewCommand("broadcast", broadcast))
+	dispatcher.AddHandler(handlers.NewCommand("backupdb", backupCmd))
 
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("progress"), progressCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("claim"), claim))
@@ -227,6 +236,13 @@ func main() {
 	}
 
 	log.Printf("%s has been started...\n", bot.User.Username)
+
+	startDBBackupTicker(bot, envLogChatID)
+	if restoredFromBackup && envLogChatID != 0 {
+		_, _ = bot.SendMessage(envLogChatID,
+			"♻️ <b>Database restored</b> from the pinned backup — all users, cards and settings are back after this redeploy.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	}
 	updater.Idle()
 }
 
@@ -509,6 +525,7 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 /addcard - ➕ Add reward cards (one per line, or reply to a list)
 /stock - 📦 Check reward stock
 /stats - 📊 Bot statistics
+/backupdb - 💾 Upload & pin a database backup right now
 /broadcast - 📢 Broadcast a message to all users
 
 ⚠️ <i>Owner commands are restricted to the bot owner.</i>
@@ -961,6 +978,31 @@ func stats(b *gotgbot.Bot, ctx *ext.Context) error {
 			"✅ Cards Claimed: <b>%d</b>",
 		len(allUsers), claimedUsers, available, claimed)
 	_, _ = msg.Reply(b, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	return nil
+}
+
+// backupCmd forces an immediate DB backup into the LOGGER_ID chat.
+func backupCmd(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	user := ctx.EffectiveUser
+	if !isAdmin(user.Id) {
+		_, _ = msg.Reply(b, "❌ You are not authorized to use this command.", nil)
+		return nil
+	}
+	if backupChatID == 0 {
+		_, _ = msg.Reply(b,
+			"⚠️ <b>LOGGER_ID is not set.</b>\n\nBackups are uploaded to the LOGGER_ID chat. Set it in your environment variables, redeploy, then run /backupdb again.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+	_, _ = msg.Reply(b, "⏳ Creating a backup...", nil)
+	if err := runDBBackup(b, backupChatID, "manual"); err != nil {
+		_, _ = msg.Reply(b, "❌ Backup failed: "+CustomError(err).Error(), nil)
+		return nil
+	}
+	_, _ = msg.Reply(b,
+		"✅ <b>Backup uploaded & pinned!</b>\n\nThe database will restore automatically on the next redeploy. 🔄",
+		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return nil
 }
 

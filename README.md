@@ -3,7 +3,7 @@
 **Premium Card** is a Telegram bot built around a simple growth funnel:
 
 1. **Force-join** — users must join your channels (supports **2+ channels**) before they can use the bot.
-2. **Human verification** — new users solve a quick math captcha (inline buttons) before registering, so scripted join-farms can't farm your referrals.
+2. **Human verification** — new users solve a quick one-tap captcha (4 rotating challenge types) before registering, so scripted join-farms can't farm your referrals.
 3. **Refer** — each user gets a personal referral link; every **5 friends** they refer (each friend also has to pass the channel check to count) unlock **one reward card**.
 4. **Unlock, repeatedly** — there is no lifetime cap: `n` referrals = 1 card, `2n` = 2 cards, `5n` = 5 cards (e.g. 25 referrals at target 5 → 5 **different** cards). Users tap **🎁 Claim Reward** to collect each unlocked card, one per tap.
 5. **You stock the rewards** — the owner adds cards with `/addcard`; the bot issues every physical card **exactly once, system-wide, atomically**, so no card code is ever given to two users. If the stock runs out, unlocked rewards stay saved for after the restock.
@@ -27,7 +27,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 |---|:---:|---|
 | `TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `OWNER_ID` | ✅ | Your numeric Telegram ID (from [@userinfobot](https://t.me/userinfobot)) |
-| `LOGGER_ID` | ➖ | Log chat ID — seed only, changeable later via `/admin` |
+| `LOGGER_ID` | 💾 | Log chat ID — also the **auto-backup & restore chat** (bot needs pin rights there). Strongly recommended! |
 | `FSUB_IDS` | ➖ | Comma-separated force-join channel IDs — seed only, changeable later |
 | `DB_PATH` | ➖ | SQLite file location (default `bot.db`, `/data` in Docker) |
 | `PORT` | ➖ | Auto-set by PaaS — enables the built-in health-check server |
@@ -36,7 +36,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 **Platform notes**
 
 - 🟣 **Heroku** — uses `app.json` + `Procfile` (Go buildpack, `worker` dyno). ⚠️ Heroku's filesystem is *ephemeral*: `bot.db` resets whenever the dyno restarts (~daily). Great for testing — for living data prefer the options below.
-- 🚂 **Railway** — auto-detects the `Dockerfile`. Attach a **volume at `/data`** (Settings → Volumes) so the SQLite DB survives redeploys.
+- 🚂 **Railway** — auto-detects the `Dockerfile` (`railway.json` pins builder + start command). **Recommended:** attach a **volume at `/data`** so the SQLite DB survives redeploys. **No volume? No problem** — set `LOGGER_ID` and the bot auto-restores its DB from the pinned backup in that chat after every redeploy (see *💾 Auto DB backup & restore* below).
 - 🎨 **Render** — one-click uses `render.yaml` (free instance, polling + health checks built in). Free instances **sleep after ~15 min without inbound traffic** — ping your service URL every 5 min with a free monitor (e.g. UptimeRobot) to stay awake. Free plan has no persistent disk (DB resets on restart); on a paid plan, enable the commented `disk` block in `render.yaml`.
 - 🌊 **Koyeb** — builds from the `Dockerfile`; add a volume mounted at `/data` if you want the DB to persist.
 - 🐳 **Any VPS with Docker** — see [manual setup](#-setup) below; one command with a named volume and you're live forever.
@@ -49,12 +49,16 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
   - 🆘 **Support button** under every delivery — link set from the panel (`https://t.me/...` or `off`)
   - 📖 **How-to-use text** — fully editable from the panel (`default` restores)
 - **Multi-channel force subscribe** — comma-separated channel list, one join prompt listing every missing channel, referral payload survives the "Try again" flow.
-- **Human-verification captcha** — after the channel check, new users solve a one-tap math captcha before they can register: fresh question every attempt, 3 tries max, 30-minute expiry, referral payload held server-side (never guessable from button data). Scripted referral farms are stopped cold.
+- **Human-verification captcha** — after the channel check, new users solve a one-tap captcha before they can register. Challenges **rotate between 4 types** (🧮 math, 🔢 sequences, 👀 emoji counting, 🕵️ odd-one-out emoji/words) so scripts can't pattern-match a fixed format; a fresh challenge on every wrong tap, 3 tries per challenge, **15-minute lockout after 3 failed challenges**, 30-minute challenge expiry, referral payload held server-side (button data only carries the tapped index). Scripted referral farms are stopped cold.
 - **Repeat rewards per N referrals** — every time a user completes the referral target a new card unlocks; pending unlocks never expire and survivors of an out-of-stock wave collect after the restock.
 - **Referral tracking with progress bar** — users always see progress toward their *next* card and get a milestone ping every time a new card unlocks.
 - **Atomic reward claims** — conditional writes inside a single transaction guarantee: one physical card per issue, never more cards than earned unlocks, nothing spent when the stock is empty.
 - **Privacy hardened** — users can only view their own info/progress (owner exempt).
 - **Zero external services** — embedded **SQLite** database, just a single `bot.db` file. No MongoDB, no hosted DB to configure.
+- **💾 Auto DB backup & restore** — survives redeploys even on ephemeral hosts (Railway without a volume, Render free, etc.):
+  - every **30 minutes** (+ right after boot, + on demand with `/backupdb`) the bot checkpoints and uploads `bot.db` to the **`LOGGER_ID` chat** and keeps the **latest backup pinned**
+  - on boot, if the local DB is missing (fresh container), the **newest pinned backup is downloaded and restored automatically** — users, cards, settings all come back
+  - needs: `LOGGER_ID` set to a chat where the bot can post **and pin** (admin rights)
 - **Full admin panel (`/admin`)** — interactive inline-keyboard UI:
   - 📊 **Dashboard** — users / banned / claimed / stock at a glance
   - 👥 **User management** — search any user, newest users list, **ban/unban**, **reset claims**, **delete user** (auto-unlinks from referrer)
@@ -85,6 +89,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 - `/addcard` — add reward cards. Paste cards after the command (**one per line**) or **reply** to a message containing the list.
 - `/stock` — view available / claimed card counts.
 - `/stats` — total users, claimed users, card inventory.
+- `/backupdb` — upload & pin a database backup to the `LOGGER_ID` chat right now (auto-backup runs every 30 min anyway).
 - `/broadcast` — reply to any message to send it to all users.
 - `/cancel` — abort an active panel input (find-user / add-cards).
 
