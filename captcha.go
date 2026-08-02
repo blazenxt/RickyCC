@@ -324,7 +324,7 @@ func renderCaptcha(c *pendingCaptcha) (string, gotgbot.InlineKeyboardMarkup) {
 	// layer so the whole verification page matches the rest of the UI.
 	// Button labels never go through premiumize — Telegram cannot render
 	// custom emoji in buttons, so options stay standard by design.
-	return premiumize(text), gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row}}
+	return premiumize(text), *decorateButtons(&gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row}})
 }
 
 // ---------- flow ----------

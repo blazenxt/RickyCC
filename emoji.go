@@ -332,12 +332,19 @@ func premiumizeButtons(kb *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboard
 	return kb
 }
 
-// buttonStyle assigns a Bot API 9.4 button color using stable callback data
-// first (labels are just a fallback for URL buttons). "" = client default.
-// Rules are deliberately conservative: destructive actions are ALWAYS red,
-// the claim/verify CTAs green, key informational/nav actions blue, and all
-// other panel buttons keep the default look so screens don't turn into a
-// rainbow.
+// buttonStyle assigns a Bot API 9.4 button color by the button's FUNCTION,
+// keyed off stable callback data. EVERY button the bot sends gets a role
+// color — "" is never returned:
+//
+//	danger  (red)    — destructive ops: deletes, bans, resets, wipes,
+//	                   even when the label says "✅ Yes, delete"
+//	success (green)  — positive CTAs: claim rewards, verify join, unban,
+//	                   and create/add actions (cards, channels, admins,
+//	                   loading the premium set)
+//	primary (blue)   — everything else: navigation, menus, settings,
+//	                   info, captcha answers, links
+//
+// Explicit pre-set styles are never touched by the caller.
 func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
 	d := btn.CallbackData
 
@@ -354,27 +361,17 @@ func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
 		return "danger"
 	}
 
-	// 2) Positive CTAs — claim rewards, confirm joined, unban.
-	if d == "claim" || d == "fsj" || strings.HasPrefix(d, "fsj.") || strings.HasPrefix(d, "admu.unban.") {
+	// 2) Positive CTAs — claiming, verifying, unbanning, CREATING things.
+	if d == "claim" || d == "fsj" || strings.HasPrefix(d, "fsj.") ||
+		strings.HasPrefix(d, "admu.unban.") ||
+		d == "admc.addcodes" || d == "admc.fsubadd" || d == "admc.adminadd" ||
+		d == "admp.emojipremium" {
 		return "success"
 	}
 
-	// 3) Primary — the main informational/navigational actions.
-	if d == "home" || strings.HasPrefix(d, "progress.") ||
-		d == "admp.dash" || d == "admp.emojipremium" || d == "admc.emojis" {
-		return "primary"
-	}
-
-	// URL buttons have no callback data — style them by role.
-	if btn.Url != "" {
-		t := strings.ToLower(btn.Text)
-		for _, role := range []string{"join channel", "refer", "owner", "support"} {
-			if strings.Contains(t, role) {
-				return "primary"
-			}
-		}
-	}
-	return ""
+	// 3) Everything else is a primary-style action: navigation, menus,
+	//    settings, info, links, captcha answers.
+	return "primary"
 }
 
 // applyButtonStyles colors every button via buttonStyle (Bot API 9.4 style

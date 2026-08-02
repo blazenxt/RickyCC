@@ -140,15 +140,18 @@ func TestApplyButtonStyles(t *testing.T) {
 		{gotgbot.InlineKeyboardButton{Text: "📊 My Progress", CallbackData: "progress.5"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🏠 Home", CallbackData: "home"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🔄 Refresh", CallbackData: "admp.dash"}, "primary"},
-		{gotgbot.InlineKeyboardButton{Text: "⚡ Load Premium Set", CallbackData: "admp.emojipremium"}, "primary"},
-		{gotgbot.InlineKeyboardButton{Text: "🎨 Custom Emojis", CallbackData: "admc.emojis"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "➕ Add Cards", CallbackData: "admc.addcodes"}, "success"},   // create = green
+		{gotgbot.InlineKeyboardButton{Text: "➕ Add Channel", CallbackData: "admc.fsubadd"}, "success"}, // create = green
+		{gotgbot.InlineKeyboardButton{Text: "➕ Add Admin", CallbackData: "admc.adminadd"}, "success"},  // create = green
+		{gotgbot.InlineKeyboardButton{Text: "⚡ Load Premium Set", CallbackData: "admp.emojipremium"}, "success"},
 		{gotgbot.InlineKeyboardButton{Text: "📢 Join Channel 1", Url: "https://t.me/x"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🔗 Refer & Earn", Url: "https://t.me/share/url?url=x"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🆘 Support", Url: "https://t.me/help"}, "primary"},
-		{gotgbot.InlineKeyboardButton{Text: "🔙 Back", CallbackData: "admp.home"}, ""},     // nav stays default
-		{gotgbot.InlineKeyboardButton{Text: "👥 Users", CallbackData: "admp.users"}, ""},  // menu stays default
-		{gotgbot.InlineKeyboardButton{Text: "13", CallbackData: "cap.4"}, ""},             // captcha answers untouched
-		{gotgbot.InlineKeyboardButton{Text: "🔗 Random Link", Url: "https://x.test"}, ""}, // unknown URL stays default
+		{gotgbot.InlineKeyboardButton{Text: "🔙 Back", CallbackData: "admp.home"}, "primary"},       // nav = blue
+		{gotgbot.InlineKeyboardButton{Text: "👥 Users", CallbackData: "admp.users"}, "primary"},     // menu = blue
+		{gotgbot.InlineKeyboardButton{Text: "13", CallbackData: "cap.4"}, "primary"},                // captcha answers = blue
+		{gotgbot.InlineKeyboardButton{Text: "🔗 Random Link", Url: "https://x.test"}, "primary"},    // any button gets a color
+		{gotgbot.InlineKeyboardButton{Text: "📢 Force-Join Setup", CallbackData: "admp.fsub"}, "primary"},
 	}
 	for i, c := range cases {
 		if got := buttonStyle(c.btn); got != c.want {
@@ -194,8 +197,34 @@ func TestDecorateButtons(t *testing.T) {
 		t.Fatalf("style decoration missing: %+v", claim)
 	}
 	users := kb.InlineKeyboard[0][1]
-	if users.Style != "" || users.IconCustomEmojiId != "" {
-		t.Fatalf("plain nav button should stay fully default: %+v", users)
+	if users.IconCustomEmojiId != "" {
+		t.Fatalf("unmapped button should not get an icon: %+v", users)
+	}
+	if users.Style != "primary" { // every button is styled by function now
+		t.Fatalf("nav button should be primary: %+v", users)
+	}
+}
+
+// Every button the bot renders must get a role color — buttonStyle never
+// leaves one unstyled.
+func TestButtonStyleNeverEmpty(t *testing.T) {
+	data := []string{
+		"", "claim", "home", "cap.0", "fsj", "fsj.99", "progress.7",
+		"admp.home", "admp.dash", "admp.users", "admp.codes", "admp.settings",
+		"admp.bcast", "admp.admins", "admp.close", "admp.recent", "admp.claims",
+		"admp.fsub", "admp.claimstoggle", "admc.logset", "admc.target",
+		"admc.support", "admc.howto", "admc.emojis", "admc.finduser",
+		"admp.clearok", "admp.fsubclear", "admp.admindel.2", "admu.ban.3",
+		"admu.del.3", "admu.delok.3", "admu.reset.3", "admu.unban.3",
+		"admc.addcodes", "admc.fsubadd", "admc.adminadd", "admp.emojipremium",
+		"progress.", "admp.gibberish",
+	}
+	valid := map[string]bool{"danger": true, "success": true, "primary": true}
+	for _, d := range data {
+		s := buttonStyle(gotgbot.InlineKeyboardButton{Text: "x", CallbackData: d})
+		if !valid[s] {
+			t.Fatalf("callback %q got unstyled %q", d, s)
+		}
 	}
 }
 

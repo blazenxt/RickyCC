@@ -295,12 +295,6 @@ func mainKeyboard(b *gotgbot.Bot, userId int64) gotgbot.InlineKeyboardMarkup {
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{
 				{
-					Text: "👤 Owner",
-					Url:  fmt.Sprintf("tg://user?id=%d", OwnerID),
-				},
-			},
-			{
-				{
 					Text: "🔗 Refer & Earn",
 					Url:  fmt.Sprintf("https://t.me/share/url?url=%s", referUrl),
 				},
