@@ -319,7 +319,12 @@ func renderCaptcha(c *pendingCaptcha) (string, gotgbot.InlineKeyboardMarkup) {
 			"Tap the correct answer below. <i>(Attempt %d of %d)</i>",
 		c.prompt, c.tries+1, captchaMaxTries)
 
-	return text, gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row}}
+	// Sweep every remaining raw Unicode emoji (counting-grid targets like
+	// ⭐🔥💎🎯, pointers, any unmapped header glyph) through the custom-emoji
+	// layer so the whole verification page matches the rest of the UI.
+	// Button labels never go through premiumize — Telegram cannot render
+	// custom emoji in buttons, so options stay standard by design.
+	return premiumize(text), gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row}}
 }
 
 // ---------- flow ----------
@@ -329,7 +334,7 @@ func renderCaptcha(c *pendingCaptcha) (string, gotgbot.InlineKeyboardMarkup) {
 func issueCaptcha(b *gotgbot.Bot, msg *gotgbot.Message, userID int64, payload string) error {
 	if rem := captchaLockRemaining(userID); rem > 0 {
 		_, err := msg.Reply(b, fmt.Sprintf(
-			"⏳ <b>Too many failed verifications.</b>\n\nPlease wait about <b>%d minute(s)</b> and send /start again.",
+			icon("validity")+" <b>Too many failed verifications.</b>\n\nPlease wait about <b>%d minute(s)</b> and send /start again.",
 			int(rem.Minutes())+1), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
@@ -378,7 +383,7 @@ func captchaCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			ShowAlert: true,
 		})
 		_, _, _ = msg.EditText(b,
-			"⌛ <b>Verification expired.</b>\n\nSend /start to begin again.",
+			icon("validity")+" <b>Verification expired.</b>\n\nSend /start to begin again.",
 			&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 		return nil
 
@@ -390,7 +395,7 @@ func captchaCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "✅ Verified — welcome!"})
 		_, _, _ = msg.EditText(b,
-			"✅ <b>Verified!</b> Setting up your account...",
+			icon("ok")+" <b>Verified!</b> Setting up your account...",
 			&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 		return completeRegistration(b, ctx, payload)
 
@@ -406,7 +411,7 @@ func captchaCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				ShowAlert: true,
 			})
 			_, _, _ = msg.EditText(b,
-				"❌ <b>Verification failed.</b>\n\nToo many wrong attempts — send /start to begin a new verification.",
+				icon("err")+" <b>Verification failed.</b>\n\nToo many wrong attempts — send /start to begin a new verification.",
 				&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 			return nil
 		}

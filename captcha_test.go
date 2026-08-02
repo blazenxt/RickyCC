@@ -190,6 +190,82 @@ func TestCaptchaAllKindsReachable(t *testing.T) {
 	}
 }
 
+// The verification page must render through the custom-emoji layer exactly
+// like the rest of the UI — including the emojis that are part of the
+// challenge itself (their appearance is one-to-one per glyph, so counting
+// stays unambiguous) — while button labels stay standard, because Telegram
+// cannot render custom emoji in inline buttons.
+func TestCaptchaRenderPremiumized(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+
+	star := iconDefaults["star"] // use the exact registry glyph
+	apple := "🍎"                // not a registry default → must never be touched
+	c := &pendingCaptcha{
+		prompt:    iconDefaults["eyes"] + " Count carefully!\n\n" + star + " " + apple + " " + star + "\n\nHow many <b>" + star + "</b> can you see?",
+		options:   []string{"2", "1", "3", "4", "5"},
+		answerIdx: 0,
+	}
+
+	// Standard mode (no mapping): zero custom-emoji tags anywhere.
+	stdText, _ := renderCaptcha(c)
+	if strings.Contains(stdText, "<tg-emoji") {
+		t.Fatalf("standard mode rendered custom tags: %q", stdText)
+	}
+	if !strings.Contains(stdText, iconDefaults["robot"]) || !strings.Contains(stdText, "How many <b>"+star+"</b>") {
+		t.Fatalf("standard fallbacks missing: %q", stdText)
+	}
+
+	if err := setEmojiIDs(map[string]string{
+		"robot": "5500000000000000001",
+		"eyes":  "5500000000000000002",
+		"star":  "5500000000000000003",
+	}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+
+	text, kb := renderCaptcha(c)
+	robotTag := `<tg-emoji emoji-id="5500000000000000001">` + iconDefaults["robot"] + `</tg-emoji>`
+	eyesTag := `<tg-emoji emoji-id="5500000000000000002">` + iconDefaults["eyes"] + `</tg-emoji>`
+	starTag := `<tg-emoji emoji-id="5500000000000000003">` + star + `</tg-emoji>`
+
+	if !strings.Contains(text, robotTag) {
+		t.Fatalf("header robot icon not premiumized: %q", text)
+	}
+	if got := strings.Count(text, eyesTag); got != 1 {
+		t.Fatalf("prompt icon should render custom exactly once, got %d: %q", got, text)
+	}
+	if got := strings.Count(text, starTag); got != 3 {
+		t.Fatalf("all 3 target glyphs (grid + question) must render custom, got %d: %q", got, text)
+	}
+	if strings.Count(text, apple) != 1 || strings.Contains(text, ">"+apple+"<") {
+		t.Fatalf("non-registry challenge emoji must stay untouched: %q", text)
+	}
+	if got := strings.Count(text, "<tg-emoji"); got != 5 {
+		t.Fatalf("expected exactly 5 tags (robot + eyes + 3 stars), got %d: %q", got, text)
+	}
+
+	// Idempotent: re-sweeping must never nest tags.
+	if again := premiumize(text); again != text {
+		t.Fatalf("premiumize not idempotent on captcha text:\n%s\n---\n%s", text, again)
+	}
+
+	// Button labels stay standard — no tags ever.
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			if strings.Contains(btn.Text, "<tg-emoji") {
+				t.Fatalf("custom emoji tag leaked into button %q", btn.Text)
+			}
+		}
+	}
+
+	// Stripping the tags reproduces exactly the standard-rendered page, so
+	// the delivery fallback path can never wedge on unsupported clients.
+	if stripped := stripTGEmoji(text); stripped != stdText {
+		t.Fatalf("stripTGEmoji mismatch:\n%q\nwant\n%q", stripped, stdText)
+	}
+}
+
 func TestCaptchaLockout(t *testing.T) {
 	// Unique per run so repeated -count runs don't share state
 	uid := int64(500000 + time.Now().UnixNano()%400000)
