@@ -113,7 +113,7 @@ func fSub(b *gotgbot.Bot, userId int64, arg string) (bool, error) {
 	})
 
 	_, err := b.SendMessage(userId,
-		"🔒 <b>Access Locked</b>\n\n"+
+		icon("lock")+" <b>Access Locked</b>\n\n"+
 			"To use this bot, join ALL of our channels first, then tap <b>Try Again</b>.",
 		&gotgbot.SendMessageOpts{
 			ParseMode:   "HTML",

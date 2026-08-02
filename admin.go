@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	admStateAdminAdd = "ADM_ADMIN_ADD"
 	admStateSupport  = "ADM_SUPPORT"
 	admStateHowto    = "ADM_HOWTO"
+	admStateEmojis   = "ADM_EMOJIS"
 )
 
 const admTimeFmt = "02 Jan 06 15:04"
@@ -106,6 +108,11 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 		toggleLabel = "▶️ Resume Claims"
 	}
 
+	emojiStr := "<i>standard emojis</i>"
+	if n := len(getEmojiIDs()); n > 0 {
+		emojiStr = fmt.Sprintf("<b>%d custom</b>", n)
+	}
+
 	text := fmt.Sprintf(
 		"🛠 <b>Bot Settings</b>\n\n"+
 			"📢 <b>Force-join channels:</b>\n%s\n\n"+
@@ -113,9 +120,10 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 			"🎯 <b>Referral target:</b> <b>%d</b>\n"+
 			"🎁 <b>Claims:</b> %s\n"+
 			"🆘 <b>Support link:</b> %s\n"+
-			"📖 <b>How-to text:</b> <i>%s</i>\n\n"+
+			"📖 <b>How-to text:</b> <i>%s</i>\n"+
+			"🎨 <b>Custom emojis:</b> %s\n\n"+
 			"<i>Changes apply instantly and persist across restarts.</i>",
-		fsum, logStr, ReferralTarget, claimStr, supportStr, esc(truncate(getHowtoText(), 60)))
+		fsum, logStr, ReferralTarget, claimStr, supportStr, esc(truncate(getHowtoText(), 60)), emojiStr)
 
 	kb := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
@@ -123,6 +131,7 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 			{admBtn("🪵 Set Log Chat", "admc.logset")},
 			{admBtn("🎯 Referral Target", "admc.target"), admBtn(toggleLabel, "admp.claimstoggle")},
 			{admBtn("🆘 Support Link", "admc.support"), admBtn("📖 How-to Text", "admc.howto")},
+			{admBtn("🎨 Custom Emojis", "admc.emojis")},
 			admBackBtn(),
 		},
 	}
@@ -316,13 +325,13 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		claimedC, _ := countClaimedCards()
 
 		admEdit(b, msg, fmt.Sprintf(
-			"📊 <b>Dashboard</b>\n\n"+
-				"👥 Total users: <b>%d</b>\n"+
-				"🚫 Banned: <b>%d</b>\n"+
-				"🎁 Users claimed: <b>%d</b>\n\n"+
-				"🎟️ Cards available: <b>%d</b>\n"+
-				"✅ Cards claimed: <b>%d</b>\n\n"+
-				"🕒 <i>Refreshed %s</i>",
+			icon("stats")+" <b>Dashboard</b>\n\n"+
+				icon("users")+" Total users: <b>%d</b>\n"+
+				icon("ban")+" Banned: <b>%d</b>\n"+
+				icon("gift")+" Users claimed: <b>%d</b>\n\n"+
+				icon("ticket")+" Cards available: <b>%d</b>\n"+
+				icon("ok")+" Cards claimed: <b>%d</b>\n\n"+
+				icon("clock")+" <i>Refreshed %s</i>",
 			total, banned, claimedU, avail, claimedC, time.Now().Format("15:04:05")),
 			gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
@@ -503,7 +512,7 @@ func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 		claim += fmt.Sprintf("\n└ Latest: <code>%s</code>", esc(truncate(u.ClaimedCard, 40)))
 	}
 	if ready := unlocksAvailable(len(u.ReferredUsers), u.Claims, ReferralTarget); ready > 0 {
-		claim += fmt.Sprintf("\n└ 🏆 <b>%d ready</b> to collect", ready)
+		claim += fmt.Sprintf("\n└ %s <b>%d ready</b> to collect", icon("trophy"), ready)
 	}
 	status := "✅ Active"
 	if u.Banned {
@@ -523,14 +532,14 @@ func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 	}
 
 	text := fmt.Sprintf(
-		"👤 <b>User Card</b>\n\n"+
-			"🆔 ID: <code>%d</code>\n"+
-			"📛 Name: %s %s\n"+
-			"🔗 Referrer: <code>%d</code>\n"+
-			"👥 Referrals: <b>%d</b> (1 card / %d refs)\n"+
-			"🎁 Rewards: %s\n"+
-			"📅 Joined: %s\n"+
-			"🔰 Status: <b>%s</b>",
+		icon("person")+" <b>User Card</b>\n\n"+
+			icon("id")+" ID: <code>%d</code>\n"+
+			icon("name")+" Name: %s %s\n"+
+			icon("link")+" Referrer: <code>%d</code>\n"+
+			icon("users")+" Referrals: <b>%d</b> (1 card / %d refs)\n"+
+			icon("gift")+" Rewards: %s\n"+
+			icon("cal")+" Joined: %s\n"+
+			icon("shield")+" Status: <b>%s</b>",
 		u.ID, name, uname, u.Referrer,
 		len(u.ReferredUsers), ReferralTarget,
 		claim, joined, status)
@@ -1123,6 +1132,145 @@ func adminHowtoMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	log.Printf("admin updated how-to text (%d chars)", len(runes))
 	_, _ = msg.Reply(b, "✅ <b>How-to text updated!</b>\n\nNew cards will show it under the card details.",
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+	return handlers.EndConversation()
+}
+
+// ---------- Custom emoji icons (admc.emojis) ----------
+
+func adminEmojisStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isAdmin(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Admins only.", ShowAlert: true})
+		return handlers.EndConversation()
+	}
+
+	cur := getEmojiIDs()
+	curStr := "<i>none — standard emojis everywhere</i>"
+	if len(cur) > 0 {
+		names := make([]string, 0, len(cur))
+		for s := range cur {
+			names = append(names, s)
+		}
+		sort.Strings(names)
+		var sb strings.Builder
+		for _, s := range names {
+			fmt.Fprintf(&sb, "▫️ <code>%s</code> = <code>%s</code>\n", s, cur[s])
+		}
+		curStr = strings.TrimRight(sb.String(), "\n")
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+		"🎨 <b>Custom Emojis</b>\n\n"+
+			"Replace the bot's standard icons with your premium custom emojis — they appear in all "+
+			"message texts and the reward-delivery caption.\n"+
+			"<i>Buttons can't render custom emojis (Telegram limit) — fallback icons show there automatically.</i>\n\n"+
+			"⚠️ <b>The emoji pack must belong to THIS bot</b> (@BotFather → /newemojipack → this bot). "+
+			"To get an ID, send a custom emoji to @JsonDumpBot and copy its <code>custom_emoji_id</code>.\n\n"+
+			"<b>Send mappings, one per line:</b>\n"+
+			"<code>card=5402038549988123456\nparty=5402123456789012345</code>\n\n"+
+			"<b>Available slots:</b>\n%s\n\n"+
+			"<b>Currently set:</b>\n%s\n\n"+
+			"Send <code>off</code> to clear all. /cancel to abort.",
+		emojiSlotList(), curStr),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	return handlers.NextConversationState(admStateEmojis)
+}
+
+func adminEmojisMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isAdmin(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+	raw := strings.TrimSpace(msg.GetText())
+
+	if strings.EqualFold(raw, "off") || strings.EqualFold(raw, "clear") {
+		if err := clearEmojiIDs(); err != nil {
+			_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+			return handlers.EndConversation()
+		}
+		log.Printf("admin cleared custom emojis")
+		_, _ = msg.Reply(b, "✅ <b>Custom emojis cleared</b> — standard icons are back everywhere.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+		return handlers.EndConversation()
+	}
+
+	// Parse "slot=ID" lines (also tolerates "slot: ID" / "slot ID")
+	candidate := map[string]string{}
+	var unknown, malformed []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.FieldsFunc(line, func(r rune) bool {
+			return r == '=' || r == ':' || r == ' ' || r == '\t'
+		})
+		if len(parts) != 2 {
+			malformed = append(malformed, truncate(line, 30))
+			continue
+		}
+		slot := strings.ToLower(strings.TrimSpace(parts[0]))
+		id := strings.TrimSpace(parts[1])
+		if _, ok := iconDefaults[slot]; !ok {
+			unknown = append(unknown, slot)
+			continue
+		}
+		if !isEmojiID(id) {
+			malformed = append(malformed, truncate(line, 30))
+			continue
+		}
+		candidate[slot] = id
+	}
+
+	if len(candidate) == 0 {
+		_, _ = msg.Reply(b,
+			"❌ <b>No valid mappings found.</b>\n\nUse one <code>slot=ID</code> pair per line, e.g.:\n<code>card=5402038549988123456</code>\n\nCheck the slot list above, send <code>off</code>, or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil // stay in the conversation for another try
+	}
+
+	// Merge over existing slots so partial updates are additive
+	merged := getEmojiIDs()
+	for s, id := range candidate {
+		merged[s] = id
+	}
+
+	// Live-validate every new ID with a test-send to this chat
+	_, _ = msg.Reply(b, fmt.Sprintf("⏳ Validating <b>%d</b> emoji ID(s) with Telegram…", len(candidate)),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	badIDs := validateEmojiIDs(b, msg.Chat.Id, candidate)
+	var rejected []string
+	for s, id := range badIDs {
+		delete(merged, s)
+		rejected = append(rejected, fmt.Sprintf("%s = %s", s, id))
+	}
+
+	if err := setEmojiIDs(merged); err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+
+	saved := len(candidate) - len(rejected)
+	log.Printf("admin saved %d custom emojis (%d rejected)", saved, len(rejected))
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "✅ <b>Custom emojis updated!</b>\n\n🎨 Saved: <b>%d</b>  ·  📦 Total active: <b>%d</b>", saved, len(merged))
+	if len(rejected) > 0 {
+		sort.Strings(rejected)
+		fmt.Fprintf(&sb, "\n\n❌ <b>Rejected</b> (not usable by this bot — pack must be bot-owned):\n<code>%s</code>", strings.Join(rejected, "\n"))
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(&sb, "\n\n⚠️ Unknown slots skipped: <code>%s</code>", strings.Join(unknown, ", "))
+	}
+	if len(malformed) > 0 {
+		fmt.Fprintf(&sb, "\n\n⚠️ Malformed lines skipped: <code>%s</code>", strings.Join(malformed, ", "))
+	}
+	sb.WriteString("\n\n<i>Open /start to preview the new look.</i>")
+
+	_, _ = msg.Reply(b, sb.String(),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
 	return handlers.EndConversation()
 }

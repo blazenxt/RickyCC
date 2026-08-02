@@ -48,6 +48,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 - **Branded reward delivery** — claimed cards are delivered as a photo caption on the bundled **Code-Stride** graphic (embedded in the binary, uploaded to Telegram once then reused via file_id): card, validity, and your how-to-use text.
   - 🆘 **Support button** under every delivery — link set from the panel (`https://t.me/...` or `off`)
   - 📖 **How-to-use text** — fully editable from the panel (`default` restores)
+- **🎨 Custom emoji icons (premium)** — replace the bot's standard icons with YOUR custom emojis (`<tg-emoji>`) across every message body and the delivery caption: 30+ named slots (`card`, `party`, `trophy`, `gift`, `validity`, …), paste `slot=emoji_id` lines in the panel, every ID is **live-validated with a test-send** (a bot can only use emoji from packs it owns), invalid IDs are rejected and reported. Buttons automatically keep standard fallbacks (Telegram doesn't allow custom emoji there), and a send-failure safety net downgrades any message back to standard icons.
 - **Multi-channel force subscribe** — comma-separated channel list, one join prompt listing every missing channel, referral payload survives the "Try again" flow.
 - **Human-verification captcha** — after the channel check, new users solve a one-tap captcha before they can register. Challenges **rotate between 4 types** (🧮 math, 🔢 sequences, 👀 emoji counting, 🕵️ odd-one-out emoji/words) so scripts can't pattern-match a fixed format; a fresh challenge on every wrong tap, 3 tries per challenge, **15-minute lockout after 3 failed challenges**, 30-minute challenge expiry, referral payload held server-side (button data only carries the tapped index). Scripted referral farms are stopped cold.
 - **Repeat rewards per N referrals** — every time a user completes the referral target a new card unlocks; pending unlocks never expire and survivors of an out-of-stock wave collect after the restock.
@@ -69,6 +70,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
     - 🎯 **Referral target** — change the required referrals anytime
     - 🆘 **Support link** for the reward-delivery button
     - 📖 **How-to-use text** shown under delivered cards
+    - 🎨 **Custom emojis** — map 30+ icon slots to your premium custom emoji IDs (live-validated)
     - ⏸️ **Claims pause/resume** — one tap, e.g. while restocking
   - 👑 **Multi-admin** — the owner grants full panel access to extra admins right from the panel (new admins get notified); only the owner (`OWNER_ID`) can add/remove them
   - 📢 **Broadcast** hub

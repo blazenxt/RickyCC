@@ -98,7 +98,8 @@ CREATE TABLE IF NOT EXISTS settings (
     claims_paused   INTEGER NOT NULL DEFAULT 0,
     admin_ids       TEXT    NOT NULL DEFAULT '[]',
     support_url     TEXT    NOT NULL DEFAULT '',
-    howto_text      TEXT    NOT NULL DEFAULT ''
+    howto_text      TEXT    NOT NULL DEFAULT '',
+    emoji_ids       TEXT    NOT NULL DEFAULT '{}'
 );
 `
 
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS settings (
 var settingsMigrations = []string{
 	`ALTER TABLE settings ADD COLUMN support_url TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE settings ADD COLUMN howto_text TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE settings ADD COLUMN emoji_ids TEXT NOT NULL DEFAULT '{}'`,
 }
 
 // userMigrations brings older user tables to the repeat-reward model:

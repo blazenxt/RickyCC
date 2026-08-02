@@ -93,7 +93,7 @@ func genMath() (string, []string, int) {
 		a, b = 2+rand.IntN(8), 2+rand.IntN(4)
 		ans, op = a*b, "×"
 	}
-	prompt := fmt.Sprintf("🧮 Solve this:\n\n<b>%d %s %d = ?</b>", a, op, b)
+	prompt := fmt.Sprintf(icon("math")+" Solve this:\n\n<b>%d %s %d = ?</b>", a, op, b)
 
 	seen := map[int]bool{ans: true}
 	options := []string{strconv.Itoa(ans)}
@@ -114,7 +114,7 @@ func genSequence() (string, []string, int) {
 	start, step := 1+rand.IntN(6), 2+rand.IntN(5)
 	t1, t2, t3 := start, start+step, start+2*step
 	ans := start + 3*step
-	prompt := fmt.Sprintf("🔢 What comes next?\n\n<b>%d, %d, %d, __ ?</b>", t1, t2, t3)
+	prompt := fmt.Sprintf(icon("num")+" What comes next?\n\n<b>%d, %d, %d, __ ?</b>", t1, t2, t3)
 
 	options := []string{strconv.Itoa(ans)}
 	for _, cand := range []int{ans + step, ans - step, ans + 1, ans + 2, ans - 1} {
@@ -156,7 +156,7 @@ func genEmojiCount() (string, []string, int) {
 	}
 	rand.Shuffle(len(items), func(i, j int) { items[i], items[j] = items[j], items[i] })
 
-	prompt := fmt.Sprintf("👀 Count carefully!\n\n%s\n\nHow many <b>%s</b> can you see?", strings.Join(items, " "), target)
+	prompt := fmt.Sprintf(icon("eyes")+" Count carefully!\n\n%s\n\nHow many <b>%s</b> can you see?", strings.Join(items, " "), target)
 
 	seen := map[int]bool{n: true}
 	options := []string{strconv.Itoa(n)}
@@ -223,7 +223,7 @@ func genOddOneOut() (string, []string, int) {
 	}
 	options = append(options, intruder)
 
-	prompt := fmt.Sprintf("🕵️ Four of these %s belong together, one doesn't.\nTap the <b>odd one out</b>! 👇", label)
+	prompt := fmt.Sprintf(icon("spy")+" Four of these %s belong together, one doesn't.\nTap the <b>odd one out</b>! 👇", label)
 	options, idx := shuffleOptions(options, 4)
 	return prompt, options, idx
 }
@@ -314,7 +314,7 @@ func renderCaptcha(c *pendingCaptcha) (string, gotgbot.InlineKeyboardMarkup) {
 	}
 
 	text := fmt.Sprintf(
-		"🤖 <b>Human Verification</b>\n\n"+
+		icon("robot")+" <b>Human Verification</b>\n\n"+
 			"%s\n\n"+
 			"Tap the correct answer below. <i>(Attempt %d of %d)</i>",
 		c.prompt, c.tries+1, captchaMaxTries)

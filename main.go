@@ -174,6 +174,7 @@ func main() {
 			handlers.NewCallback(callbackquery.Prefix("admc.adminadd"), adminAdminAddStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.support"), adminSupportStart),
 			handlers.NewCallback(callbackquery.Prefix("admc.howto"), adminHowtoStart),
+			handlers.NewCallback(callbackquery.Prefix("admc.emojis"), adminEmojisStart),
 		},
 		map[string][]ext.Handler{
 			admStateLogSet:   {handlers.NewMessage(anyText, adminLogSetMessage)},
@@ -182,6 +183,7 @@ func main() {
 			admStateAdminAdd: {handlers.NewMessage(anyText, adminAdminAddMessage)},
 			admStateSupport:  {handlers.NewMessage(anyText, adminSupportMessage)},
 			admStateHowto:    {handlers.NewMessage(anyText, adminHowtoMessage)},
+			admStateEmojis:   {handlers.NewMessage(anyText, adminEmojisMessage)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -330,21 +332,23 @@ func welcomeText(firstName string, u *User, isNew bool) string {
 	if target > 0 {
 		rem = done % target
 	}
-	greeting := "👋 <b>Welcome back"
+	greeting := icon("wave") + " <b>Welcome back"
 	if isNew {
-		greeting = "🎉 <b>Welcome"
+		greeting = icon("party") + " <b>Welcome"
 	}
 	text := fmt.Sprintf(
 		"%s to %s, %s!</b>\n\n"+
-			"👥 <b>Referrals:</b> %d\n"+
-			"🎁 <b>Rewards claimed:</b> %d\n"+
-			"📶 <b>Next card:</b> %d/%d  %s\n\n",
-		greeting, BrandName, esc(firstName), done, u.Claims, rem, target, progressBar(rem, target))
+			"%s <b>Referrals:</b> %d\n"+
+			"%s <b>Rewards claimed:</b> %d\n"+
+			"%s <b>Next card:</b> %d/%d  %s\n\n",
+		greeting, BrandName, esc(firstName),
+		icon("users"), done, icon("gift"), u.Claims,
+		icon("next"), rem, target, progressBar(rem, target))
 
 	if ready := unlocksAvailable(done, u.Claims, target); ready > 0 {
-		text += fmt.Sprintf("🏆 <b>%d reward(s) ready!</b> Tap 🎁 Claim Reward below!", ready)
+		text += fmt.Sprintf("%s <b>%d reward(s) ready!</b> Tap %s Claim Reward below!", icon("trophy"), ready, icon("gift"))
 	} else if target > 0 {
-		text += fmt.Sprintf("🔗 Share your link — every <b>%d referrals = 1 card</b> 🎁\n<b>%d more</b> to your next card!", target, nextRewardIn(done, target))
+		text += fmt.Sprintf("%s Share your link — every <b>%d referrals = 1 card</b> %s\n<b>%d more</b> to your next card!", icon("link"), target, icon("gift"), nextRewardIn(done, target))
 	}
 	return text
 }
@@ -462,17 +466,17 @@ func completeRegistration(b *gotgbot.Bot, ctx *ext.Context, payload string) erro
 			switch {
 			case ready > 0 && target > 0 && doneCount%target == 0:
 				notify = fmt.Sprintf(
-					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d</b>\n\n🏆 <b>New card unlocked!</b> You now have <b>%d reward(s) ready</b> — open the bot and tap 🎁 Claim Reward!",
-					esc(user.FirstName), doneCount, ready)
+					"%s <b>%s</b> joined via your link!\n\n%s Referrals: <b>%d</b>\n\n%s <b>New card unlocked!</b> You now have <b>%d reward(s) ready</b> — open the bot and tap %s Claim Reward!",
+					icon("party"), esc(user.FirstName), icon("users"), doneCount, icon("trophy"), ready, icon("gift"))
 			case ready > 0:
 				notify = fmt.Sprintf(
-					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d</b>\n🎁 You still have <b>%d reward(s)</b> waiting — claim them anytime!\n🔗 <b>%d more</b> to your next card.",
-					esc(user.FirstName), doneCount, ready, nextRewardIn(doneCount, target))
+					"%s <b>%s</b> joined via your link!\n\n%s Referrals: <b>%d</b>\n%s You still have <b>%d reward(s)</b> waiting — claim them anytime!\n%s <b>%d more</b> to your next card.",
+					icon("party"), esc(user.FirstName), icon("users"), doneCount, icon("gift"), ready, icon("link"), nextRewardIn(doneCount, target))
 			default:
 				notify = fmt.Sprintf(
-					"🎉 <b>%s</b> joined via your link!\n\n👥 Referrals: <b>%d</b>  %s\n🔗 <b>%d more</b> to your next card 🎁",
-					esc(user.FirstName), doneCount,
-					progressBar(remD, target), nextRewardIn(doneCount, target))
+					"%s <b>%s</b> joined via your link!\n\n%s Referrals: <b>%d</b>  %s\n%s <b>%d more</b> to your next card %s",
+					icon("party"), esc(user.FirstName), icon("users"), doneCount,
+					progressBar(remD, target), icon("link"), nextRewardIn(doneCount, target), icon("gift"))
 			}
 			_, _ = b.SendMessage(referrerID, notify, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		}
@@ -571,29 +575,30 @@ func progressText(b *gotgbot.Bot, u *User) string {
 	referUrl := fmt.Sprintf("https://t.me/%s?start=%d", b.User.Username, u.ID)
 
 	text := fmt.Sprintf(
-		"📊 <b>Your Progress</b>\n\n"+
-			"👥 <b>Referrals:</b> %d total\n"+
-			"🎁 <b>Rewards claimed:</b> %d\n"+
-			"📶 <b>Next card:</b> %d/%d  %s\n",
-		done, u.Claims, rem, target, progressBar(rem, target))
+		"%s <b>Your Progress</b>\n\n"+
+			"%s <b>Referrals:</b> %d total\n"+
+			"%s <b>Rewards claimed:</b> %d\n"+
+			"%s <b>Next card:</b> %d/%d  %s\n",
+		icon("stats"), icon("users"), done, icon("gift"), u.Claims,
+		icon("next"), rem, target, progressBar(rem, target))
 
 	if ready > 0 {
-		text += fmt.Sprintf("\n🏆 <b>%d reward(s) unlocked!</b> Tap 🎁 Claim Reward!\n", ready)
+		text += fmt.Sprintf("\n%s <b>%d reward(s) unlocked!</b> Tap %s Claim Reward!\n", icon("trophy"), ready, icon("gift"))
 	} else if target > 0 {
-		text += fmt.Sprintf("\n🔗 <b>%d more referral(s)</b> to your next card — every %d referrals = 1 card!\n", nextRewardIn(done, target), target)
+		text += fmt.Sprintf("\n%s <b>%d more referral(s)</b> to your next card — every %d referrals = 1 card!\n", icon("link"), nextRewardIn(done, target), target)
 	}
 
 	// Collected cards stay one tap away, copyable (latest 3)
 	if u.Claims > 0 {
 		if cards, err := getUserCards(u.ID, 3); err == nil && len(cards) > 0 {
-			text += "\n💳 <b>Your latest card(s):</b>\n"
+			text += fmt.Sprintf("\n%s <b>Your latest card(s):</b>\n", icon("card"))
 			for _, c := range cards {
-				text += fmt.Sprintf("▫️ <code>%s</code>\n", esc(c.Card))
+				text += fmt.Sprintf("%s <code>%s</code>\n", icon("bullet"), esc(c.Card))
 			}
 		}
 	}
 
-	text += fmt.Sprintf("\n🔗 Keep sharing — referrals never expire!\nYour referral link:\n<code>%s</code>", referUrl)
+	text += fmt.Sprintf("\n%s Keep sharing — referrals never expire!\nYour referral link:\n<code>%s</code>", icon("link"), referUrl)
 	return text
 }
 
@@ -676,17 +681,19 @@ func info(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	reward := fmt.Sprintf("<b>%d</b> claimed", u.Claims)
 	if ready := unlocksAvailable(done, u.Claims, target); ready > 0 {
-		reward += fmt.Sprintf(" • 🏆 <b>%d ready!</b>", ready)
+		reward += fmt.Sprintf(" • %s <b>%d ready!</b>", icon("trophy"), ready)
 	}
 
 	response := fmt.Sprintf(
-		"👤 <b>User Information</b>\n\n"+
-			"🔹 <b>User ID:</b> <code>%d</code>\n"+
-			"🔗 <b>Referrer:</b> <code>%d</code>\n"+
-			"👥 <b>Referrals:</b> %d total\n"+
-			"📶 <b>Next card:</b> %d/%d  %s\n"+
-			"🎁 <b>Rewards:</b> %s",
-		u.ID, u.Referrer, done, rem, target, progressBar(rem, target), reward)
+		"%s <b>User Information</b>\n\n"+
+			"%s <b>User ID:</b> <code>%d</code>\n"+
+			"%s <b>Referrer:</b> <code>%d</code>\n"+
+			"%s <b>Referrals:</b> %d total\n"+
+			"%s <b>Next card:</b> %d/%d  %s\n"+
+			"%s <b>Rewards:</b> %s",
+		icon("person"), icon("iddot"), u.ID, icon("link"), u.Referrer,
+		icon("users"), done, icon("next"), rem, target, progressBar(rem, target),
+		icon("gift"), reward)
 
 	_, _ = msg.Reply(b, response, &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
@@ -802,14 +809,18 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	// Deliver the card as a branded photo with caption
 	caption := fmt.Sprintf(
-		"🎉 <b>Congratulations, %s!</b>\n\n"+
-			"🏆 <b>Reward #%d</b>\n"+
-			"💳 <b>Card:</b> <code>%s</code>\n"+
-			"⏳ <b>Validity:</b> One-time USE only\n\n"+
-			"📖 <b>How to use:</b>\n%s",
-		esc(user.FirstName), rewardNo, esc(card.Card), esc(getHowtoText()))
+		"%s <b>Congratulations, %s!</b>\n\n"+
+			"%s <b>Reward #%d</b>\n"+
+			"%s <b>Card:</b> <code>%s</code>\n"+
+			"%s <b>Validity:</b> One-time USE only\n\n"+
+			"%s <b>How to use:</b>\n%s",
+		icon("party"), esc(user.FirstName),
+		icon("trophy"), rewardNo,
+		icon("card"), esc(card.Card),
+		icon("validity"),
+		icon("howto"), esc(getHowtoText()))
 	if remaining > 0 {
-		caption += fmt.Sprintf("\n\n🎁 <b>%d more reward(s) ready</b> — tap below to claim!", remaining)
+		caption += fmt.Sprintf("\n\n%s <b>%d more reward(s) ready</b> — tap below to claim!", icon("gift"), remaining)
 	}
 
 	claimButtons := [][]gotgbot.InlineKeyboardButton{}
@@ -835,21 +846,24 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		ReplyMarkup: claimKeyboard,
 	})
 	if err != nil {
-		// Fall back to plain text so the card still reaches the user
+		// Fall back to plain text; if a custom emoji was the reason the send
+		// failed, the stripped caption (standard fallbacks) always delivers.
 		log.Printf("photo delivery failed for user %d: %v", user.Id, err)
-		_, _ = msg.Reply(b, caption, &gotgbot.SendMessageOpts{
+		if _, err2 := msg.Reply(b, stripTGEmoji(caption), &gotgbot.SendMessageOpts{
 			ParseMode:   "HTML",
 			ReplyMarkup: claimKeyboard,
-		})
+		}); err2 != nil {
+			log.Printf("plain-text fallback also failed for user %d: %v", user.Id, err2)
+		}
 	} else {
 		cacheCardImageID(sent)
 	}
 
 	doneText := fmt.Sprintf(
-		"🎁 <b>Reward #%d sent above!</b> 👆\n\nKeep it private — tap 📊 My Progress anytime to view your cards.",
-		rewardNo)
+		"%s <b>Reward #%d sent above!</b> 👆\n\nKeep it private — tap %s My Progress anytime to view your cards.",
+		icon("gift"), rewardNo, icon("stats"))
 	if remaining > 0 {
-		doneText += fmt.Sprintf("\n\n🎁 <b>%d more reward(s) ready</b> — claim again!", remaining)
+		doneText += fmt.Sprintf("\n\n%s <b>%d more reward(s) ready</b> — claim again!", icon("gift"), remaining)
 	}
 	_, _, _ = msg.EditText(b, doneText, &gotgbot.EditMessageTextOpts{
 		ParseMode:   "HTML",
@@ -857,8 +871,9 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 	})
 
 	notifyLogChat(b, fmt.Sprintf(
-		"🎁 <b>Reward claimed</b>\n\n👤 %s (<code>%d</code>)\n🏆 User reward #: <b>%d</b>\n🆔 Card ID: <code>%d</code>\n📦 Stock left: <b>%d</b>",
-		esc(user.FirstName), user.Id, rewardNo, card.ID, stockLeft))
+		"%s <b>Reward claimed</b>\n\n%s %s (<code>%d</code>)\n%s User reward #: <b>%d</b>\n%s Card ID: <code>%d</code>\n%s Stock left: <b>%d</b>",
+		icon("gift"), icon("person"), esc(user.FirstName), user.Id,
+		icon("trophy"), rewardNo, icon("id"), card.ID, icon("box"), stockLeft))
 
 	return nil
 }

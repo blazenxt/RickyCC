@@ -24,6 +24,7 @@ var (
 	adminIDs     []int64
 	supportURL   string
 	howtoText    string
+	customIcons  map[string]string // icon slot -> custom emoji id (see emoji.go)
 )
 
 // defaultHowto is shown under delivered cards until an admin sets custom text.
@@ -45,12 +46,12 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 		log.Printf("config: failed to seed settings: %v", err)
 	}
 
-	var fsubRaw, adminsRaw, support, howto string
+	var fsubRaw, adminsRaw, support, howto, emojisRaw string
 	var target, paused int
 	var logID int64
 	err = db.QueryRow(
-		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text FROM settings WHERE id = 1",
-	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto)
+		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids FROM settings WHERE id = 1",
+	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw)
 	if err != nil {
 		log.Printf("config: failed to read settings: %v", err)
 		return
@@ -59,6 +60,8 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	var fsubs, admins []int64
 	_ = json.Unmarshal([]byte(fsubRaw), &fsubs)
 	_ = json.Unmarshal([]byte(adminsRaw), &admins)
+	var icons map[string]string
+	_ = json.Unmarshal([]byte(emojisRaw), &icons)
 
 	cfgMu.Lock()
 	logChatID = logID
@@ -66,6 +69,7 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	adminIDs = admins
 	supportURL = support
 	howtoText = howto
+	customIcons = icons
 	cfgMu.Unlock()
 
 	if target > 0 {
@@ -283,6 +287,46 @@ func removeAdminID(id int64) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// ---------- Custom emoji icons (see emoji.go) ----------
+
+// getEmojiID returns the custom emoji ID mapped to an icon slot, if any.
+func getEmojiID(slot string) (string, bool) {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	id, ok := customIcons[slot]
+	return id, ok
+}
+
+// getEmojiIDs returns a copy of the whole slot->ID map.
+func getEmojiIDs() map[string]string {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	out := make(map[string]string, len(customIcons))
+	for k, v := range customIcons {
+		out[k] = v
+	}
+	return out
+}
+
+// setEmojiIDs replaces the entire custom-emoji mapping at once.
+func setEmojiIDs(next map[string]string) error {
+	if next == nil {
+		next = map[string]string{}
+	}
+	data, _ := json.Marshal(next)
+	if _, err := db.Exec("UPDATE settings SET emoji_ids = ? WHERE id = 1", string(data)); err != nil {
+		return fmt.Errorf("failed to save custom emojis: %v", err)
+	}
+	cfgMu.Lock()
+	customIcons = next
+	cfgMu.Unlock()
+	return nil
+}
+
+func clearEmojiIDs() error {
+	return setEmojiIDs(map[string]string{})
 }
 
 // ---------- Helpers ----------
