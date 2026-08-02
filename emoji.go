@@ -84,7 +84,7 @@ func emojiSlotList() string {
 	return sb.String()
 }
 
-// isEmojiID checks a pasted custom_emoji_id is plausibly a numeric ID.
+// isEmojiID checks a pasted value looks like a numeric custom_emoji_id.
 func isEmojiID(s string) bool {
 	if len(s) < 5 || len(s) > 25 {
 		return false
@@ -97,16 +97,37 @@ func isEmojiID(s string) bool {
 	return true
 }
 
+// isPlainEmoji checks a value is a short emoji literal (e.g. "🔥", "💎✨")
+// rather than a custom emoji ID. Max ~8 code points keeps panels tidy.
+func isPlainEmoji(s string) bool {
+	if s == "" || isEmojiID(s) {
+		return false
+	}
+	r := []rune(s)
+	if len(r) > 8 {
+		return false
+	}
+	for _, c := range r {
+		if c < 0x80 { // plain ASCII text/numbers are not emoji art
+			return false
+		}
+	}
+	return true
+}
+
 // icon returns the rendering of a slot for HTML message bodies / captions:
-// the custom <tg-emoji> wrapper when the owner mapped this slot, otherwise
-// the standard Unicode emoji.
+// a <tg-emoji> wrapper for mapped custom emoji IDs, a mapped literal emoji
+// as-is, otherwise the standard Unicode default.
 func icon(name string) string {
 	def, ok := iconDefaults[name]
 	if !ok {
 		return ""
 	}
-	if id, set := getEmojiID(name); set && id != "" {
-		return fmt.Sprintf(`<tg-emoji emoji-id="%s">%s</tg-emoji>`, id, def)
+	if v, set := getEmojiID(name); set && v != "" {
+		if isEmojiID(v) {
+			return fmt.Sprintf(`<tg-emoji emoji-id="%s">%s</tg-emoji>`, v, def)
+		}
+		return v // owner mapped this slot to a plain (public) emoji
 	}
 	return def
 }
@@ -119,9 +140,10 @@ func stripTGEmoji(s string) string {
 	return tgEmojiRe.ReplaceAllString(s, "$1")
 }
 
-// validateEmojiIDs test-sends the candidate custom emoji to the chat and
-// returns the slots Telegram rejected (e.g. pack not owned by the bot).
-// A nil/empty result means every ID is usable.
+// validateEmojiIDs test-sends the candidate numeric custom-emoji IDs to the
+// chat and returns the slots Telegram rejected (e.g. pack not owned by the
+// bot and no Fragment username). Plain-literal emoji values never need
+// validation and are ignored here.
 func validateEmojiIDs(b *gotgbot.Bot, chatID int64, candidate map[string]string) map[string]string {
 	bad := map[string]string{}
 	if len(candidate) == 0 {
@@ -138,9 +160,14 @@ func validateEmojiIDs(b *gotgbot.Bot, chatID int64, candidate map[string]string)
 
 	slots := make([]string, 0, len(candidate))
 	for s := range candidate {
-		slots = append(slots, s)
+		if isEmojiID(candidate[s]) { // literal emojis (🔥…) never need testing
+			slots = append(slots, s)
+		}
 	}
 	sort.Strings(slots)
+	if len(slots) == 0 {
+		return bad
+	}
 
 	if _, err := b.SendMessage(chatID, render(slots), &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err == nil {
 		log.Printf("custom emoji validation: all %d IDs accepted", len(slots))

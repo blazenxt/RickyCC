@@ -1164,13 +1164,16 @@ func adminEmojisStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, _ = query.Answer(b, nil)
 	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
 		"🎨 <b>Custom Emojis</b>\n\n"+
-			"Replace the bot's standard icons with your premium custom emojis — they appear in all "+
-			"message texts and the reward-delivery caption.\n"+
+			"Replace the bot's standard icons — they change in all message texts and the reward-delivery caption.\n"+
 			"<i>Buttons can't render custom emojis (Telegram limit) — fallback icons show there automatically.</i>\n\n"+
-			"⚠️ <b>The emoji pack must belong to THIS bot</b> (@BotFather → /newemojipack → this bot). "+
-			"To get an ID, send a custom emoji to @JsonDumpBot and copy its <code>custom_emoji_id</code>.\n\n"+
-			"<b>Send mappings, one per line:</b>\n"+
-			"<code>card=5402038549988123456\nparty=5402123456789012345</code>\n\n"+
+			"<b>Two ways to map a slot:</b>\n"+
+			"1️⃣ <b>Any public emoji</b> (works instantly, no restrictions):\n"+
+			"<code>card=🔥\nparty=💎</code>\n"+
+			"2️⃣ <b>Premium custom emoji ID</b>:\n"+
+			"<code>trophy=5402038549988123456</code>\n"+
+			"⚠️ Custom IDs work only from packs <b>owned by this bot</b> (@BotFather → /newemojipack) — "+
+			"or from <b>any public pack</b> if the bot owns an extra username bought on <b>Fragment</b>. "+
+			"Get an ID by sending the emoji to @JsonDumpBot (<code>custom_emoji_id</code>).\n\n"+
 			"<b>Available slots:</b>\n%s\n\n"+
 			"<b>Currently set:</b>\n%s\n\n"+
 			"Send <code>off</code> to clear all. /cancel to abort.",
@@ -1218,7 +1221,7 @@ func adminEmojisMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 			unknown = append(unknown, slot)
 			continue
 		}
-		if !isEmojiID(id) {
+		if !isEmojiID(id) && !isPlainEmoji(id) {
 			malformed = append(malformed, truncate(line, 30))
 			continue
 		}
@@ -1260,7 +1263,7 @@ func adminEmojisMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	fmt.Fprintf(&sb, "✅ <b>Custom emojis updated!</b>\n\n🎨 Saved: <b>%d</b>  ·  📦 Total active: <b>%d</b>", saved, len(merged))
 	if len(rejected) > 0 {
 		sort.Strings(rejected)
-		fmt.Fprintf(&sb, "\n\n❌ <b>Rejected</b> (not usable by this bot — pack must be bot-owned):\n<code>%s</code>", strings.Join(rejected, "\n"))
+		fmt.Fprintf(&sb, "\n\n❌ <b>Rejected by Telegram</b> (use a bot-owned pack, buy the bot a Fragment username to unlock <b>all</b> public custom emojis, or use plain emojis):\n<code>%s</code>", strings.Join(rejected, "\n"))
 	}
 	if len(unknown) > 0 {
 		fmt.Fprintf(&sb, "\n\n⚠️ Unknown slots skipped: <code>%s</code>", strings.Join(unknown, ", "))

@@ -48,6 +48,44 @@ func TestIconDefaultsAndCustom(t *testing.T) {
 	}
 }
 
+func TestIconPlainEmojiValues(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+
+	// Any public/standard emoji must be accepted and rendered as-is —
+	// no tg-emoji wrapper, no validation round-trip.
+	if err := setEmojiIDs(map[string]string{"card": "🔥", "party": "💎✨"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+	if got := icon("card"); got != "🔥" {
+		t.Fatalf("plain emoji slot = %q, want 🔥", got)
+	}
+	if got := icon("party"); got != "💎✨" {
+		t.Fatalf("compound plain emoji slot = %q, want 💎✨", got)
+	}
+	loadConfig(0, nil) // persists across reload
+	if got := icon("card"); got != "🔥" {
+		t.Fatalf("plain emoji did not persist: %q", got)
+	}
+
+	// Plain emoji values must be skipped by the validator (nothing to test)
+	if bad := validateEmojiIDs(nil, 0, map[string]string{"card": "🔥"}); len(bad) != 0 {
+		t.Fatalf("plain emoji should need no validation, got %v", bad)
+	}
+
+	// isPlainEmoji shape checks
+	for _, ok := range []string{"🔥", "💎✨", "🎟️"} {
+		if !isPlainEmoji(ok) {
+			t.Fatalf("isPlainEmoji(%q) = false, want true", ok)
+		}
+	}
+	for _, no := range []string{"", "5402", "5402038549988123456", "fire", "F", "ab💎"} {
+		if isPlainEmoji(no) {
+			t.Fatalf("isPlainEmoji(%q) = true, want false", no)
+		}
+	}
+}
+
 func TestStripTGEmoji(t *testing.T) {
 	in := `🎉 Hi <tg-emoji emoji-id="123">💳</tg-emoji> and <tg-emoji emoji-id="456">🏆</tg-emoji>!`
 	want := "🎉 Hi 💳 and 🏆!"
