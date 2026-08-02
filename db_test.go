@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -48,7 +50,7 @@ func TestUserAndReferral(t *testing.T) {
 	}
 }
 
-func TestCardClaimAtomicity(t *testing.T) {
+func TestCardDedupImport(t *testing.T) {
 	setupTestDB(t)
 
 	added, skipped, err := addCards([]string{"CARD-1", "CARD-2", "CARD-1", "", "  "})
@@ -64,30 +66,136 @@ func TestCardClaimAtomicity(t *testing.T) {
 	if added != 0 || skipped != 2 {
 		t.Fatalf("expected added=0 skipped=2, got added=%d skipped=%d", added, skipped)
 	}
+}
 
-	card, err := claimCardAtomic(42)
+func TestIssueOnceGuarantee(t *testing.T) {
+	setupTestDB(t)
+
+	if _, _, err := addCards([]string{"CARD-1", "CARD-2"}); err != nil {
+		t.Fatalf("addCards: %v", err)
+	}
+
+	// Unregistered users can't be issued cards
+	if _, err := issueCard(99); err == nil || errors.Is(err, errAlreadyClaimed) {
+		t.Fatalf("expected user-not-found error, got %v", err)
+	}
+
+	for _, id := range []int64{42, 43, 44} {
+		if err := addUser(User{ID: id, Name: "U"}); err != nil {
+			t.Fatalf("addUser %d: %v", id, err)
+		}
+	}
+
+	// First issue: oldest card first, recorded on the user
+	card, err := issueCard(42)
 	if err != nil {
-		t.Fatalf("claimCardAtomic: %v", err)
+		t.Fatalf("issueCard: %v", err)
 	}
-	if card.Card != "CARD-1" { // oldest first
-		t.Fatalf("expected CARD-1, got %s", card.Card)
+	if card.Card != "CARD-1" || card.ClaimedBy != 42 || card.ClaimedAt == nil {
+		t.Fatalf("issue metadata wrong: %+v", card)
 	}
-	if card.ClaimedBy != 42 || card.ClaimedAt == nil {
-		t.Fatalf("claim metadata wrong: %+v", card)
-	}
-
-	if avail, _ := countAvailableCards(); avail != 1 {
-		t.Fatalf("expected 1 left, got %d", avail)
+	u, _ := getUser(42)
+	if !u.HasClaimed || u.ClaimedCard != "CARD-1" {
+		t.Fatalf("user 42 should hold CARD-1, got %+v", u)
 	}
 
-	// Double-claim prevention: same card never handed out twice
-	card2, _ := claimCardAtomic(43)
-	if card2.Card != "CARD-2" {
-		t.Fatalf("expected CARD-2, got %s", card2.Card)
+	// ONE CARD PER USER: second issue for same user is rejected
+	if _, err = issueCard(42); !errors.Is(err, errAlreadyClaimed) {
+		t.Fatalf("expected errAlreadyClaimed, got %v", err)
 	}
 
-	if _, err := claimCardAtomic(44); !errors.Is(err, errNoStock) {
+	// Other users still get their own (different) card
+	card2, err := issueCard(43)
+	if err != nil || card2.Card != "CARD-2" {
+		t.Fatalf("expected CARD-2 for user 43, got %v / %+v", err, card2)
+	}
+	if avail, _ := countAvailableCards(); avail != 0 {
+		t.Fatalf("stock should be empty, got %d", avail)
+	}
+
+	// OUT OF STOCK → flag must roll back so the user can claim after restock
+	if _, err = issueCard(44); !errors.Is(err, errNoStock) {
 		t.Fatalf("expected errNoStock, got %v", err)
+	}
+	u, _ = getUser(44)
+	if u.HasClaimed {
+		t.Fatal("out-of-stock must not leave user flagged as claimed")
+	}
+
+	// Restock → same user can now claim
+	if _, _, err := addCards([]string{"CARD-3"}); err != nil {
+		t.Fatalf("addCards: %v", err)
+	}
+	card3, err := issueCard(44)
+	if err != nil || card3.Card != "CARD-3" {
+		t.Fatalf("restock claim failed: %v / %+v", err, card3)
+	}
+}
+
+func TestIssueConcurrency(t *testing.T) {
+	setupTestDB(t)
+
+	// 20 users, 5 cards — every user must get at most one card,
+	// and no card may ever land with two users. Ever.
+	const users, stock = 20, 5
+	var codes []string
+	for i := 0; i < stock; i++ {
+		codes = append(codes, fmt.Sprintf("CARD-%d", i))
+	}
+	if _, _, err := addCards(codes); err != nil {
+		t.Fatalf("addCards: %v", err)
+	}
+	for i := 0; i < users; i++ {
+		if err := addUser(User{ID: int64(1000 + i), Name: "U"}); err != nil {
+			t.Fatalf("addUser: %v", err)
+		}
+	}
+
+	type result struct{ card, errText string }
+	results := make(chan result, users)
+	var wg sync.WaitGroup
+	for i := 0; i < users; i++ {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			c, err := issueCard(id)
+			res := result{}
+			if err == nil {
+				res.card = c.Card
+			} else {
+				res.errText = err.Error()
+			}
+			results <- res
+		}(int64(1000 + i))
+	}
+	wg.Wait()
+	close(results)
+
+	issued := map[string]int{}
+	succeeded := 0
+	for r := range results {
+		if r.card != "" {
+			succeeded++
+			issued[r.card]++
+		}
+	}
+	if succeeded != stock {
+		t.Fatalf("expected exactly %d successful issues, got %d", stock, succeeded)
+	}
+	for code, n := range issued {
+		if n != 1 {
+			t.Fatalf("card %s issued %d times — delivery guarantee broken!", code, n)
+		}
+	}
+
+	// No card left, everyone else must have been told "no stock"
+	if avail, _ := countAvailableCards(); avail != 0 {
+		t.Fatalf("stock should be empty, got %d", avail)
+	}
+	claims, _ := countClaimedCards()
+	claimers, _ := countClaimedUsers()
+	if claims != int64(stock) || claimers != int64(stock) {
+		t.Fatalf("claimed counts wrong: cards=%d users=%d", claims, claimers)
 	}
 }
 

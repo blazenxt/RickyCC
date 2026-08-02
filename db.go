@@ -38,8 +38,11 @@ type Card struct {
 	ClaimedAt *time.Time
 }
 
-// errNoStock is returned by claimCardAtomic when the stock is empty.
+// errNoStock is returned by issueCard when the stock is empty.
 var errNoStock = errors.New("no cards left in stock")
+
+// errAlreadyClaimed is returned by issueCard when the user already holds a card.
+var errAlreadyClaimed = errors.New("user already claimed a card")
 
 var db *sql.DB
 
@@ -214,14 +217,6 @@ func updateUserProfile(userID int64, name, username string) {
 	if err != nil {
 		fmt.Printf("failed to update profile for user %d: %v\n", userID, err)
 	}
-}
-
-func markUserClaimed(userID int64, card string) error {
-	_, err := db.Exec("UPDATE users SET has_claimed = 1, claimed_card = ? WHERE id = ?", card, userID)
-	if err != nil {
-		return fmt.Errorf("failed to mark user %d as claimed: %v", userID, err)
-	}
-	return nil
 }
 
 func countClaimedUsers() (int64, error) {
@@ -407,16 +402,42 @@ func countClaimedCards() (int64, error) {
 	return n, err
 }
 
-// claimCardAtomic atomically claims the oldest available card for the user
-// inside a transaction, so the same card can never be handed out twice.
-// Returns errNoStock when the stock is empty.
-func claimCardAtomic(userID int64) (*Card, error) {
+// issueCard atomically grants exactly ONE card to a user.
+//
+// Hard guarantees, enforced by conditional writes inside a single transaction:
+//   - the same card can never be issued twice (card-side gate),
+//   - a user can never receive more than one card, even across concurrent
+//     double-taps/devices (user-side gate),
+//   - if the stock is empty the user's flag is rolled back, so nothing gets stuck.
+//
+// Returns errNoStock when the stock is empty and errAlreadyClaimed when the
+// user already holds a card.
+func issueCard(userID int64) (*Card, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to start transaction: %v", err)
 	}
 	defer tx.Rollback()
 
+	// 1) Per-user gate: exactly one flow can flip has_claimed 0 -> 1.
+	res, err := tx.Exec("UPDATE users SET has_claimed = 1 WHERE id = ? AND has_claimed = 0", userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lock user claim: %v", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Either the user doesn't exist or already claimed — tell them apart.
+		var claimed int
+		serr := tx.QueryRow("SELECT has_claimed FROM users WHERE id = ?", userID).Scan(&claimed)
+		if serr == sql.ErrNoRows {
+			return nil, fmt.Errorf("user with ID %d does not exist", userID)
+		}
+		if serr != nil {
+			return nil, fmt.Errorf("failed to check user: %v", serr)
+		}
+		return nil, errAlreadyClaimed
+	}
+
+	// 2) Oldest available card.
 	var (
 		cardID  int64
 		code    string
@@ -433,8 +454,9 @@ func claimCardAtomic(userID int64) (*Card, error) {
 		return nil, fmt.Errorf("failed to fetch card: %v", err)
 	}
 
+	// 3) Per-card gate: exactly one flow can flip available -> claimed.
 	now := time.Now().Unix()
-	res, err := tx.Exec(
+	res, err = tx.Exec(
 		"UPDATE cards SET status = ?, claimed_by = ?, claimed_at = ? WHERE id = ? AND status = ?",
 		CardClaimed, userID, now, cardID, CardAvailable,
 	)
@@ -442,7 +464,13 @@ func claimCardAtomic(userID int64) (*Card, error) {
 		return nil, fmt.Errorf("failed to claim card: %v", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, errNoStock // lost the race; treated as no stock for this attempt
+		return nil, errNoStock // lost the race — behaves like empty stock for this attempt
+	}
+
+	// 4) Record the issued card on the user in the SAME transaction, so the
+	//    card can never be "lost" between claiming and delivery.
+	if _, err = tx.Exec("UPDATE users SET claimed_card = ? WHERE id = ?", code, userID); err != nil {
+		return nil, fmt.Errorf("failed to record claimed card: %v", err)
 	}
 
 	if err = tx.Commit(); err != nil {

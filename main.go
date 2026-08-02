@@ -660,29 +660,30 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Atomic claim — safe against double-taps and concurrent requests
-	card, err := claimCardAtomic(user.Id)
+	// Exactly one card, issued exactly once — enforced atomically in the DB.
+	card, err := issueCard(user.Id)
 	if err != nil {
-		if errors.Is(err, errNoStock) {
+		switch {
+		case errors.Is(err, errNoStock):
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 				Text:      "😔 Rewards are out of stock right now. Please check back soon!",
 				ShowAlert: true,
 			})
-			return nil
+		case errors.Is(err, errAlreadyClaimed):
+			// Lost a race with a duplicate tap — their single issued card
+			// is still safe in the DB and viewable via My Progress.
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "✅ Already claimed — check 📊 My Progress to view your card.",
+				ShowAlert: true,
+			})
+		default:
+			log.Printf("claim failed for user %d: %v", user.Id, err)
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "❌ An error occurred. Please try again later.",
+				ShowAlert: true,
+			})
 		}
-		log.Printf("claim failed for user %d: %v", user.Id, err)
-		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text:      "❌ An error occurred. Please try again later.",
-			ShowAlert: true,
-		})
 		return nil
-	}
-
-	if err := markUserClaimed(user.Id, card.Card); err != nil {
-		// The card is already assigned; alert the admin instead of failing the user
-		log.Printf("CRITICAL: user %d claimed card %d but HasClaimed flag update failed: %v", user.Id, card.ID, err)
-		notifyLogChat(b, fmt.Sprintf(
-			"⚠️ User <code>%d</code> claimed card <code>%d</code> but flag update failed. Please verify manually.",
-			user.Id, card.ID))
 	}
 
 	stockLeft, _ := countAvailableCards()
