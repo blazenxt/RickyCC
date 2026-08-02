@@ -1,3 +1,6 @@
+# Minimal build context: Go sources + embedded assets only
 **
 !go.*
 !*.go
+!assets
+!assets/**
