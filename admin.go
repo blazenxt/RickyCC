@@ -429,14 +429,14 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			fmt.Fprintf(&sb, "• %s — <code>%d</code> — 👥%d 🎁×%d%s\n",
 				name, u.ID, len(u.ReferredUsers), u.Claims, flags)
 		}
-		sb.WriteString("\n🎁 has rewards · 🚫 banned — use 🔍 Find User for actions")
+		sb.WriteString("\n<i>Tap a user below to manage them.</i> 🎁 has rewards · 🚫 banned")
 
-		admEdit(b, msg, sb.String(), gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{admBtn("🔍 Find User", "admc.finduser")},
-				{admBtn("🔙 Users", "admp.users")},
-			},
+		rows := admRecentUserButtons(users)
+		rows = append(rows, []gotgbot.InlineKeyboardButton{
+			admBtn("🔍 Find User", "admc.finduser"),
+			admBtn("🔙 Users", "admp.users"),
 		})
+		admEdit(b, msg, sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows})
 
 	case "codes":
 		avail, _ := countAvailableCards()
@@ -548,6 +548,30 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 // ---------- User actions (admu.<action>.<id>) ----------
 
+// admRecentUserButtons renders one tap-to-manage row per user for the
+// Recent Users screen — the list is no longer a dead end (fixed the
+// "flow breaks midway" gap: admins had to memorise the ID and re-run
+// 🔍 Find User just to act on someone). Read-only action: admu.view.*
+// simply renders the user's manage card.
+func admRecentUserButtons(users []User) [][]gotgbot.InlineKeyboardButton {
+	rows := make([][]gotgbot.InlineKeyboardButton, 0, len(users))
+	for _, u := range users {
+		name := strings.TrimSpace(u.Name)
+		if name == "" {
+			name = fmt.Sprintf("User %d", u.ID)
+		}
+		name = truncate(name, 18)
+		label := "👤 " + name
+		if u.Banned {
+			label = "🚫 " + name
+		}
+		rows = append(rows, []gotgbot.InlineKeyboardButton{
+			admBtn(label, fmt.Sprintf("admu.view.%d", u.ID)),
+		})
+	}
+	return rows
+}
+
 func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 	claim := fmt.Sprintf("<b>%d</b> claimed", u.Claims)
 	if u.Claims > 0 {
@@ -628,6 +652,21 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	switch action {
+	case "view":
+		// Read-only: render the manage card (mutations go through the
+		// dedicated actions below, which then refresh this same view).
+		u, err := getUser(uid)
+		if err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "❌ User not found — they may have been deleted.",
+				ShowAlert: true})
+			return nil
+		}
+		_, _ = query.Answer(b, nil)
+		text, kb := adminUserCardView(u)
+		admEdit(b, msg, text, kb)
+		return nil
+
 	case "ban":
 		if uid == OwnerID {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
@@ -661,6 +700,12 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔄 Claims reset — all earned rewards can be collected again."})
 
 	case "del":
+		if uid == OwnerID {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "❌ You can't delete yourself.",
+				ShowAlert: true})
+			return nil
+		}
 		// Confirmation step
 		u, err := getUser(uid)
 		if err != nil {
@@ -684,6 +729,12 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 
 	case "delok":
+		if uid == OwnerID {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "❌ You can't delete yourself.",
+				ShowAlert: true})
+			return nil
+		}
 		if err := deleteUser(uid); err != nil {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
@@ -736,7 +787,7 @@ func adminFindUserStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	_, _ = query.Answer(b, nil)
 	_, _, _ = ctx.EffectiveMessage.EditText(b,
-		"🔍 <b>Find User</b>\n\nSend the user's <b>Telegram ID</b> now.\n\n/cancel to abort.",
+		"🔍 <b>Find User</b>\n\nSend the user's <b>Telegram ID</b> now.\n<i>Tip: recent users can be managed with one tap from 🆕 Recent Users.</i>\n\n/cancel to abort.",
 		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 	return handlers.NextConversationState(admStateFindUser)
 }
@@ -760,9 +811,9 @@ func adminFindUserMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	text, kb := adminUserCardView(u)
-	_, _ = msg.Reply(b, text, &gotgbot.SendMessageOpts{
+	_, _ = msg.Reply(b, premiumize(text), &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
-		ReplyMarkup: kb,
+		ReplyMarkup: *decorateButtons(&kb), // same icons + role colors as the panel
 	})
 	return handlers.EndConversation()
 }
