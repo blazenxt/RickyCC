@@ -124,6 +124,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("progress"), progressCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("claim"), claim))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("home"), home))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cap."), captchaCallback))
 
 	// Admin panel
 	dispatcher.AddHandler(handlers.NewCommand("admin", adminCmd))
@@ -217,10 +218,30 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		// PaaS health checks (Railway / Render web service / Koyeb) expect an
+		// HTTP listener on $PORT even when the bot works via long polling.
+		if Port != "" {
+			go startHealthServer(Port)
+		}
 	}
 
 	log.Printf("%s has been started...\n", bot.User.Username)
 	updater.Idle()
+}
+
+// startHealthServer answers platform health checks with 200 OK on "/".
+// Only used in polling mode when PORT is set (webhook mode already listens).
+func startHealthServer(port string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("ok"))
+	})
+	log.Printf("Health-check server listening on :%s", port)
+	if err := http.ListenAndServe("0.0.0.0:"+port, mux); err != nil {
+		log.Printf("health-check server stopped: %v", err)
+	}
 }
 
 // ---------- UI helpers ----------
@@ -356,7 +377,30 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	// ---- New user registration ----
+	// ---- New user: human verification BEFORE registration ----
+	// Channels are checked above; the captcha stops scripted join-farms.
+	// The referral payload is preserved server-side until solved.
+	return issueCaptcha(b, msg, user.Id, userArgs)
+}
+
+// completeRegistration runs after a NEW user passes force-join AND the
+// captcha. It registers them (attaching the referral if present) and greets.
+func completeRegistration(b *gotgbot.Bot, ctx *ext.Context, payload string) error {
+	msg := ctx.EffectiveMessage
+	user := ctx.EffectiveUser
+
+	// Defense in depth: never register twice (e.g. replayed callback)
+	if existing, err := getUser(user.Id); err == nil && existing != nil {
+		_, _ = msg.Reply(b, welcomeText(user.FirstName, existing, false), &gotgbot.SendMessageOpts{
+			ReplyMarkup: mainKeyboard(b, user.Id),
+			ParseMode:   "HTML",
+			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
+				IsDisabled: true,
+			},
+		})
+		return nil
+	}
+
 	newUser := User{
 		ID:       user.Id,
 		Name:     user.FirstName,
@@ -364,8 +408,9 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	var referrerID int64
-	if len(args) > 0 {
-		referrerID, err = strconv.ParseInt(strings.TrimSpace(args[0]), 10, 64)
+	if payload != "" {
+		var err error
+		referrerID, err = strconv.ParseInt(strings.TrimSpace(payload), 10, 64)
 		if err != nil || referrerID <= 0 {
 			_, _ = msg.Reply(b, "❌ <b>Invalid referral link!</b>\n\nPlease check the link and try again.", &gotgbot.SendMessageOpts{
 				ParseMode: "HTML",
@@ -449,8 +494,9 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 
 <b>How it works</b>
 1️⃣ Join our channels
-2️⃣ Refer friends with your link — every <b>%d referrals = 1 card</b> 🎁
-3️⃣ Claim rewards &amp; keep going — <b>no limit!</b>
+2️⃣ Verify you're human 🤖 (one quick tap)
+3️⃣ Refer friends with your link — every <b>%d referrals = 1 card</b> 🎁
+4️⃣ Claim rewards &amp; keep going — <b>no limit!</b>
 <i>Example: %d referrals → 1 card, %d referrals → 2 cards, %d referrals → 5 cards...</i>
 
 <b>🔹 User Commands</b>

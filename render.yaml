@@ -1,0 +1,23 @@
+# Render one-click Blueprint — https://render.com/deploy?repo=https://github.com/blazenxt/RickyCC
+#
+# The bot runs with long polling; a tiny built-in health server answers
+# Render's checks on $PORT (injected automatically by Render).
+services:
+  - type: web
+    name: premium-card-bot
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: TOKEN
+        sync: false # prompted during deploy
+      - key: OWNER_ID
+        sync: false # prompted during deploy
+
+    # NOTE: the free plan has no persistent disk — bot.db resets when the
+    # service redeploys or restarts. On a paid plan you can add:
+    # disk:
+    #   name: premiumcard-data
+    #   mountPath: /data
+    #   sizeGB: 1
+    # ...and the SQLite database (stored in /data) will survive restarts.

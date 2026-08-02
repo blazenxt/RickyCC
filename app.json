@@ -1,0 +1,30 @@
+{
+  "name": "Premium Card Bot",
+  "description": "Telegram refer-and-unlock bot: force-join channels, math captcha, repeatable reward cards, full admin panel, embedded SQLite.",
+  "repository": "https://github.com/blazenxt/RickyCC",
+  "logo": "https://raw.githubusercontent.com/blazenxt/RickyCC/master/assets/card.jpg",
+  "keywords": ["telegram", "bot", "referral", "golang"],
+  "stack": "heroku-24",
+  "buildpacks": [
+    { "url": "heroku/go" }
+  ],
+  "env": {
+    "TOKEN": {
+      "description": "Bot token from @BotFather"
+    },
+    "OWNER_ID": {
+      "description": "Your numeric Telegram user ID (get it from @userinfobot)"
+    },
+    "LOGGER_ID": {
+      "description": "Optional: chat ID for reward logs (can also be set later via /admin)",
+      "required": false
+    },
+    "FSUB_IDS": {
+      "description": "Optional: comma-separated force-join channel IDs (can also be set later via /admin)",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": { "quantity": 1, "size": "eco" }
+  }
+}
