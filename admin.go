@@ -384,21 +384,8 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	case "users":
 		_, _ = query.Answer(b, nil)
-		total, _ := countAllUsers()
-		banned, _ := countBannedUsers()
-		claimedU, _ := countClaimedUsers()
-
-		admEdit(b, msg, fmt.Sprintf(
-			"👥 <b>User Management</b>\n\n"+
-				"Total: <b>%d</b>  ·  🚫 Banned: <b>%d</b>  ·  🎁 Claimed: <b>%d</b>",
-			total, banned, claimedU),
-			gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-					{admBtn("🔍 Find User", "admc.finduser")},
-					{admBtn("🆕 Recent Users", "admp.recent")},
-					admBackBtn(),
-				},
-			})
+		text, kb := admUsersView()
+		admEdit(b, msg, text, kb)
 
 	case "recent":
 		_, _ = query.Answer(b, nil)
@@ -439,24 +426,9 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		admEdit(b, msg, sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows})
 
 	case "codes":
-		avail, _ := countAvailableCards()
-		claimedC, _ := countClaimedCards()
 		_, _ = query.Answer(b, nil)
-
-		admEdit(b, msg, fmt.Sprintf(
-			"🎟️ <b>Card Stock</b>\n\n"+
-				"✅ Available: <b>%d</b>\n"+
-				"🎁 Claimed: <b>%d</b>\n"+
-				"📦 Total: <b>%d</b>",
-			avail, claimedC, avail+claimedC),
-			gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-					{admBtn("➕ Add Cards", "admc.addcodes")},
-					{admBtn("🧾 Recent Claims", "admp.claims")},
-					{admBtn("🧹 Clear Claimed", "admp.clear")},
-					admBackBtn(),
-				},
-			})
+		text, kb := admCodesView()
+		admEdit(b, msg, text, kb)
 
 	case "claims":
 		_, _ = query.Answer(b, nil)
@@ -553,6 +525,40 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 // "flow breaks midway" gap: admins had to memorise the ID and re-run
 // 🔍 Find User just to act on someone). Read-only action: admu.view.*
 // simply renders the user's manage card.
+func admUsersView() (string, gotgbot.InlineKeyboardMarkup) {
+	total, _ := countAllUsers()
+	banned, _ := countBannedUsers()
+	claimedU, _ := countClaimedUsers()
+	return fmt.Sprintf(
+			"👥 <b>User Management</b>\n\n"+
+				"Total: <b>%d</b>  ·  🚫 Banned: <b>%d</b>  ·  🎁 Claimed: <b>%d</b>",
+			total, banned, claimedU), gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{admBtn("🔍 Find User", "admc.finduser")},
+				{admBtn("🆕 Recent Users", "admp.recent")},
+				admBackBtn(),
+			},
+		}
+}
+
+func admCodesView() (string, gotgbot.InlineKeyboardMarkup) {
+	avail, _ := countAvailableCards()
+	claimedC, _ := countClaimedCards()
+	return fmt.Sprintf(
+			"🎟️ <b>Card Stock</b>\n\n"+
+				"✅ Available: <b>%d</b>\n"+
+				"🎁 Claimed: <b>%d</b>\n"+
+				"📦 Total: <b>%d</b>",
+			avail, claimedC, avail+claimedC), gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{admBtn("➕ Add Cards", "admc.addcodes")},
+				{admBtn("🧾 Recent Claims", "admp.claims")},
+				{admBtn("🧹 Clear Claimed", "admp.clear")},
+				admBackBtn(),
+			},
+		}
+}
+
 func admRecentUserButtons(users []User) [][]gotgbot.InlineKeyboardButton {
 	rows := make([][]gotgbot.InlineKeyboardButton, 0, len(users))
 	for _, u := range users {
@@ -786,9 +792,9 @@ func adminFindUserStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b,
-		"🔍 <b>Find User</b>\n\nSend the user's <b>Telegram ID</b> now.\n<i>Tip: recent users can be managed with one tap from 🆕 Recent Users.</i>\n\n/cancel to abort.",
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(
+		"🔍 <b>Find User</b>\n\nSend the user's <b>Telegram ID</b> now.\n<i>Tip: recent users can be managed with one tap from 🆕 Recent Users.</i>"),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("users")})
 	return handlers.NextConversationState(admStateFindUser)
 }
 
@@ -831,13 +837,12 @@ func adminAddCardsStart(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	avail, _ := countAvailableCards()
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(fmt.Sprintf(
 		"➕ <b>Add Codes</b>\n\n"+
 			"Send the cards now — <b>one per line</b>. Duplicates are skipped automatically.\n\n"+
-			"📦 Current stock: <b>%d</b>\n\n"+
-			"/cancel to abort.",
-		avail),
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+			"📦 Current stock: <b>%d</b>",
+		avail)),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("codes")})
 	return handlers.NextConversationState(admStateAddCards)
 }
 
@@ -877,6 +882,54 @@ func adminCancel(b *gotgbot.Bot, ctx *ext.Context) error {
 
 // ---------- Conversations: bot settings ----------
 
+// admConvBackBtn is the single 🔙 Back button attached to every
+// conversation prompt — it replaces the retired /cancel command flow.
+// Tapping it ends the conversation and takes the panel straight back to
+// the section the conversation was opened from.
+func admConvBackBtn(target string) gotgbot.InlineKeyboardMarkup {
+	kb := gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{admBtn("🔙 Back", "admcback."+target)},
+		},
+	}
+	return *decorateButtons(&kb)
+}
+
+// adminConversationBack powers that button (registered inside every
+// conversation state, so it only fires while a conversation is active).
+func adminConversationBack(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	msg := ctx.EffectiveMessage
+
+	if !isAdmin(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      "❌ Owner only.",
+			ShowAlert: true,
+		})
+		return handlers.EndConversation()
+	}
+
+	var (
+		text string
+		kb   gotgbot.InlineKeyboardMarkup
+	)
+	switch strings.TrimPrefix(query.Data, "admcback.") {
+	case "users":
+		text, kb = admUsersView()
+	case "codes":
+		text, kb = admCodesView()
+	case "fsub":
+		text, kb = admFsubView()
+	case "admins":
+		text, kb = admAdminsView()
+	default: // "settings" and anything unknown land on the settings hub
+		text, kb = admSettingsView()
+	}
+	_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔙 Back"})
+	admEdit(b, msg, text, kb)
+	return handlers.EndConversation()
+}
+
 func admSettingsBackBtn() gotgbot.InlineKeyboardMarkup {
 	m := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
@@ -896,12 +949,11 @@ func adminLogSetStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b,
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(
 		"🪵 <b>Set Log Chat</b>\n\n"+
 			"Send the chat ID where claim notifications should go — a channel/group (<code>-100...</code>) or your own user ID.\n\n"+
-			"<i>The bot must be able to message that chat (member/admin).</i>\n\n"+
-			"/cancel to abort.",
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+			"<i>The bot must be able to message that chat (member/admin).</i>"),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("settings")})
 	return handlers.NextConversationState(admStateLogSet)
 }
 
@@ -947,12 +999,11 @@ func adminFsubAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b,
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(
 		"📢 <b>Add Force-Join Channel</b>\n\n"+
 			"Send the channel ID (e.g. <code>-1001234567890</code>).\n\n"+
-			"<i>The bot must be an <b>admin</b> in the channel with invite permission, otherwise users can't join it.</i>\n\n"+
-			"/cancel to abort.",
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+			"<i>The bot must be an <b>admin</b> in the channel with invite permission, otherwise users can't join it.</i>"),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("fsub")})
 	return handlers.NextConversationState(admStateFsubAdd)
 }
 
@@ -1017,10 +1068,10 @@ func adminTargetStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
-		"🎯 <b>Referral Target</b>\n\nSend the number of friends a user must refer to unlock a reward.\n\nCurrent: <b>%d</b>\n\n/cancel to abort.",
-		ReferralTarget),
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(fmt.Sprintf(
+		"🎯 <b>Referral Target</b>\n\nSend the number of friends a user must refer to unlock a reward.\n\nCurrent: <b>%d</b>",
+		ReferralTarget)),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("settings")})
 	return handlers.NextConversationState(admStateTarget)
 }
 
@@ -1060,12 +1111,11 @@ func adminAdminAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b,
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(
 		"👑 <b>Add Admin</b>\n\n"+
 			"Send the Telegram user ID you want to grant full admin panel access.\n\n"+
-			"<i>They will be able to manage users, cards, settings and broadcast. Choose carefully.</i>\n\n"+
-			"/cancel to abort.",
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+			"<i>They will be able to manage users, cards, settings and broadcast. Choose carefully.</i>"),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("admins")})
 	return handlers.NextConversationState(admStateAdminAdd)
 }
 
@@ -1118,13 +1168,13 @@ func adminSupportStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(fmt.Sprintf(
 		"🆘 <b>Support Link</b>\n\n"+
 			"Send the link for the Support button shown with delivered cards — e.g. <code>https://t.me/YourSupport</code>.\n\n"+
 			"Current: %s\n\n"+
-			"Send <code>off</code> to hide the button.\n/cancel to abort.",
-		current),
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+			"Send <code>off</code> to hide the button.",
+		current)),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("settings")})
 	return handlers.NextConversationState(admStateSupport)
 }
 
@@ -1187,9 +1237,9 @@ func adminHowtoStart(b *gotgbot.Bot, ctx *ext.Context) error {
 		"📖 <b>How-to-Use Text</b>\n\n"+
 			"Send the instructions shown under every delivered card (plain text, up to 700 characters).\n\n"+
 			"<b>Current:</b>\n<i>%s</i>\n\n"+
-			"Send <code>default</code> to restore the built-in text.\n/cancel to abort.",
+			"Send <code>default</code> to restore the built-in text.",
 		esc(truncate(getHowtoText(), 300)))),
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("settings")})
 	return handlers.NextConversationState(admStateHowto)
 }
 
@@ -1258,8 +1308,7 @@ func adminEmojisStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, _ = query.Answer(b, nil)
 	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(fmt.Sprintf(
 		"🎨 <b>Custom Emojis</b>\n\n"+
-			"Replace the bot's standard icons — they change in all message texts and the reward-delivery caption.\n"+
-			"<i>Buttons can't render custom emojis (Telegram limit) — fallback icons show there automatically.</i>\n\n"+
+			"Replace the bot's standard icons — they change in all message texts, the reward-delivery caption AND on buttons (icon shown before the label on Bot API 9.4+ clients; standard text fallback elsewhere).\n\n"+
 			"<b>Two ways to map a slot:</b>\n"+
 			"1️⃣ <b>Any public emoji</b> (works instantly, no restrictions):\n"+
 			"<code>card=🔥\nparty=💎</code>\n"+
@@ -1270,9 +1319,9 @@ func adminEmojisStart(b *gotgbot.Bot, ctx *ext.Context) error {
 			"Get an ID by sending the emoji to @JsonDumpBot (<code>custom_emoji_id</code>).\n\n"+
 			"<b>Available slots:</b>\n%s\n\n"+
 			"<b>Currently set:</b>\n%s\n\n"+
-			"Send <code>off</code> to clear all. /cancel to abort.",
+			"Send <code>off</code> to clear all.",
 		emojiSlotList(), curStr)),
-		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("settings")})
 	return handlers.NextConversationState(admStateEmojis)
 }
 

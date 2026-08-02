@@ -151,7 +151,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewConversation(
 		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.finduser"), adminFindUserStart)},
 		map[string][]ext.Handler{
-			admStateFindUser: {handlers.NewMessage(anyText, adminFindUserMessage)},
+			admStateFindUser: {handlers.NewMessage(anyText, adminFindUserMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -163,7 +163,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewConversation(
 		[]ext.Handler{handlers.NewCallback(callbackquery.Prefix("admc.addcodes"), adminAddCardsStart)},
 		map[string][]ext.Handler{
-			admStateAddCards: {handlers.NewMessage(anyText, adminAddCardsMessage)},
+			admStateAddCards: {handlers.NewMessage(anyText, adminAddCardsMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
@@ -184,13 +184,13 @@ func main() {
 			handlers.NewCallback(callbackquery.Prefix("admc.emojis"), adminEmojisStart),
 		},
 		map[string][]ext.Handler{
-			admStateLogSet:   {handlers.NewMessage(anyText, adminLogSetMessage)},
-			admStateFsubAdd:  {handlers.NewMessage(anyText, adminFsubAddMessage)},
-			admStateTarget:   {handlers.NewMessage(anyText, adminTargetMessage)},
-			admStateAdminAdd: {handlers.NewMessage(anyText, adminAdminAddMessage)},
-			admStateSupport:  {handlers.NewMessage(anyText, adminSupportMessage)},
-			admStateHowto:    {handlers.NewMessage(anyText, adminHowtoMessage)},
-			admStateEmojis:   {handlers.NewMessage(anyText, adminEmojisMessage)},
+			admStateLogSet:   {handlers.NewMessage(anyText, adminLogSetMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
+			admStateFsubAdd:  {handlers.NewMessage(anyText, adminFsubAddMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
+			admStateTarget:   {handlers.NewMessage(anyText, adminTargetMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
+			admStateAdminAdd: {handlers.NewMessage(anyText, adminAdminAddMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
+			admStateSupport:  {handlers.NewMessage(anyText, adminSupportMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
+			admStateHowto:    {handlers.NewMessage(anyText, adminHowtoMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
+			admStateEmojis:   {handlers.NewMessage(anyText, adminEmojisMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), adminConversationBack)},
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},

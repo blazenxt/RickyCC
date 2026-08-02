@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -102,6 +103,91 @@ func TestAdminUserCardViewButtons(t *testing.T) {
 	joinedB := strings.Join(cbB, " ")
 	if !strings.Contains(joinedB, "admu.unban.5") || strings.Contains(joinedB, "admu.ban.5") {
 		t.Fatalf("banned card should show unban only: %s", joinedB)
+	}
+}
+
+// The /cancel "abort flow" is gone: every conversation prompt must carry a
+// 🔙 Back button whose callback routes through admcback.* instead, and the
+// phrase must have vanished from the admin sources entirely.
+func TestConversationBackButtons(t *testing.T) {
+	src, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	for ln, line := range strings.Split(string(src), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue // comments may mention the retired flow
+		}
+		if strings.Contains(line, "/cancel to abort") {
+			t.Fatalf("line %d still advertises /cancel — every prompt needs a 🔙 Back button now", ln+1)
+		}
+	}
+
+	for target, wantView := range map[string]string{
+		"users": "admcback.users", "codes": "admcback.codes",
+		"fsub": "admcback.fsub", "admins": "admcback.admins",
+		"settings": "admcback.settings",
+	} {
+		kb := admConvBackBtn(target)
+		if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 1 {
+			t.Fatalf("%s: expected single back button", target)
+		}
+		btn := kb.InlineKeyboard[0][0]
+		if btn.CallbackData != wantView {
+			t.Fatalf("%s: callback %q, want %q", target, btn.CallbackData, wantView)
+		}
+		if btn.Style != "primary" { // decorated automatically
+			t.Fatalf("%s: back button style=%q, want primary", target, btn.Style)
+		}
+	}
+
+	// Every parent view must have at least one prompt navigating back to it
+	// (the callback literal is built at run time as "admcback."+target).
+	for _, v := range []string{"users", "codes", "fsub", "admins", "settings"} {
+		if !strings.Contains(string(src), `admConvBackBtn("`+v+`")`) {
+			t.Fatalf("no conversation prompt navigates back to %s", v)
+		}
+	}
+}
+
+// Extracted section views power both the panel switch and conversation
+// back-navigation, so they must render identically.
+func TestAdminSectionViews(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+
+	uText, uKb := admUsersView()
+	if !strings.Contains(uText, "User Management") {
+		t.Fatalf("users view text: %q", uText)
+	}
+	var cb []string
+	for _, row := range uKb.InlineKeyboard {
+		for _, b := range row {
+			cb = append(cb, b.CallbackData)
+		}
+	}
+	j := strings.Join(cb, " ")
+	for _, want := range []string{"admc.finduser", "admp.recent", "admp.home"} {
+		if !strings.Contains(j, want) {
+			t.Fatalf("users view missing %q: %s", want, j)
+		}
+	}
+
+	cText, cKb := admCodesView()
+	if !strings.Contains(cText, "Card Stock") {
+		t.Fatalf("codes view text: %q", cText)
+	}
+	var cbC []string
+	for _, row := range cKb.InlineKeyboard {
+		for _, b := range row {
+			cbC = append(cbC, b.CallbackData)
+		}
+	}
+	jC := strings.Join(cbC, " ")
+	for _, want := range []string{"admc.addcodes", "admp.claims", "admp.clear", "admp.home"} {
+		if !strings.Contains(jC, want) {
+			t.Fatalf("codes view missing %q: %s", want, jC)
+		}
 	}
 }
 
