@@ -119,6 +119,10 @@ func main() {
 	// configured slots or the probe fails.
 	preloadPremiumEmojiSet(bot, OwnerID)
 
+	// Pre-warm the invite-link cache in the background so the first locking
+	// /start never waits on a GetChat round-trip per channel.
+	go warmInviteCache(bot)
+
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
 			log.Println("an error occurred while handling update:", err.Error())
@@ -506,7 +510,13 @@ func completeRegistration(b *gotgbot.Bot, ctx *ext.Context, payload string) erro
 					icon("party"), esc(user.FirstName), icon("users"), doneCount,
 					progressBar(remD, target), icon("link"), nextRewardIn(doneCount, target), icon("gift"))
 			}
-			_, _ = b.SendMessage(referrerID, notify, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			// Fire-and-forget: the NEW user's welcome must never wait on a
+			// send to somebody else's chat (referrer may be slow/blocked).
+			if notify != "" {
+				go func(chatID int64, text string) {
+					_, _ = b.SendMessage(chatID, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				}(referrerID, notify)
+			}
 		}
 	}
 
@@ -899,7 +909,9 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		ReplyMarkup: claimKeyboard,
 	})
 
-	notifyLogChat(b, fmt.Sprintf(
+	// Log-chat notification is fire-and-forget: the user's claim flow must
+	// never wait on an extra send to a chat they can't even see.
+	go notifyLogChat(b, fmt.Sprintf(
 		"%s <b>Reward claimed</b>\n\n%s %s (<code>%d</code>)\n%s User reward #: <b>%d</b>\n%s Card ID: <code>%d</code>\n%s Stock left: <b>%d</b>",
 		icon("gift"), icon("person"), esc(user.FirstName), user.Id,
 		icon("trophy"), rewardNo, icon("id"), card.ID, icon("box"), stockLeft))

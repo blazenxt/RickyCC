@@ -5,7 +5,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -87,8 +86,7 @@ func parseFsubRetryData(data string) string {
 
 func lockFsubText() string {
 	return icon("lock") + " <b>Access Locked</b>\n\n" +
-		"To use this bot, join ALL of our channels first, then tap <b>Joined — Try Again</b>.\n\n" +
-		"<i>Private channel needs admin approval? Just send the join request — the bot counts it automatically. ✅</i>"
+		"To use this bot, join ALL of our channels first, then tap <b>Joined — Try Again</b>."
 }
 
 // fsubSatisfied reports whether a channel counts as joined for the
@@ -101,37 +99,95 @@ func fsubSatisfied(status string, pendingRequest bool) bool {
 
 // fsubMissingButtons returns one join button (with a working invite link)
 // per channel the user is NOT a member of; empty means fully joined.
+//
+// Speed: every GetChatMember lookup runs CONCURRENTLY (network round-trips
+// dominate the check; a handful at once stays far below rate limits) and
+// invite links for missing channels are fetched in parallel too — plus
+// cached process-wide, so repeat checks cost zero extra API calls.
 func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboardButton, error) {
+	channels := getFsubChannels()
+
+	type memberResult struct {
+		status string
+		err    error
+	}
+	results := make([]memberResult, len(channels))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8) // polite concurrency cap
+	for i, chatID := range channels {
+		wg.Add(1)
+		go func(i int, chatID int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			userMember, err := b.GetChatMember(chatID, userId, nil)
+			if err != nil {
+				if !isNotMemberErr(err) {
+					results[i] = memberResult{err: err}
+					return
+				}
+				results[i] = memberResult{status: "left"} // never joined / left
+				return
+			}
+			results[i] = memberResult{status: userMember.MergeChatMember().Status}
+		}(i, chatID)
+	}
+	wg.Wait()
+
+	unsatisfied := make([]bool, len(channels))
+	for i, r := range results {
+		if r.err != nil {
+			return nil, fmt.Errorf("error getting chat member: %s", r.err)
+		}
+		pending := hasJoinRequest(channels[i], userId)
+		if !fsubSatisfied(r.status, pending) {
+			unsatisfied[i] = true
+		} else if memberStatuses[r.status] && pending {
+			deleteJoinRequest(channels[i], userId)
+		}
+	}
+
+	// Invite links only for missing channels, fetched in parallel as well.
+	links := make([]string, len(channels))
+	linkErrs := make([]error, len(channels))
+	for i, chatID := range channels {
+		if !unsatisfied[i] {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, chatID int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			links[i], linkErrs[i] = fetchInviteLink(b, chatID)
+		}(i, chatID)
+	}
+	wg.Wait()
+
 	var buttons [][]gotgbot.InlineKeyboardButton
-	for i, chatID := range getFsubChannels() {
-		status := ""
-		userMember, err := b.GetChatMember(chatID, userId, nil)
-		if err != nil {
-			if !isNotMemberErr(err) {
-				return nil, fmt.Errorf("error getting chat member: %s", err)
-			}
-			status = "left" // user has never joined / left the channel
-		} else {
-			status = userMember.MergeChatMember().Status
+	for i, chatID := range channels {
+		if !unsatisfied[i] {
+			continue
 		}
-
-		pending := hasJoinRequest(chatID, userId)
-		if !fsubSatisfied(status, pending) {
-			inviteLink, err := fetchInviteLink(b, chatID)
-			if err != nil || inviteLink == "" {
-				return nil, fmt.Errorf("invite link not available for chat %d", chatID)
-			}
-			buttons = append(buttons, []gotgbot.InlineKeyboardButton{
-				{Text: fmt.Sprintf("📢 Join Channel %d", i+1), Url: inviteLink},
-			})
-		} else if memberStatuses[status] && pending {
-			// Real member now — the stored pending marker is obsolete.
-			deleteJoinRequest(chatID, userId)
+		if linkErrs[i] != nil || links[i] == "" {
+			return nil, fmt.Errorf("invite link not available for chat %d", chatID)
 		}
-
-		time.Sleep(300 * time.Millisecond)
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{
+			{Text: fmt.Sprintf("📢 Join Channel %d", i+1), Url: links[i]},
+		})
 	}
 	return buttons, nil
+}
+
+// warmInviteCache pre-fetches invite links for all configured channels in
+// the background at boot, so the very first locking /start never waits on a
+// GetChat round-trip.
+func warmInviteCache(b *gotgbot.Bot) {
+	for _, chatID := range getFsubChannels() {
+		if _, err := fetchInviteLink(b, chatID); err != nil {
+			log.Printf("invite-link warm-up failed for chat %d: %v", chatID, err)
+		}
+	}
 }
 
 // fSub checks whether the user is a member of ALL configured force-join
