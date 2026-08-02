@@ -65,7 +65,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 			{admBtn("👑 Admins", "admp.admins"), admBtn("❌ Close", "admp.close")},
 		},
 	}
-	return *premiumizeButtons(&m)
+	return *decorateButtons(&m)
 }
 
 // admEdit is a small helper to swap the panel view. Text and BUTTONS both
@@ -74,7 +74,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 func admEdit(b *gotgbot.Bot, msg *gotgbot.Message, text string, kb gotgbot.InlineKeyboardMarkup) {
 	_, _, err := msg.EditText(b, premiumize(text), &gotgbot.EditMessageTextOpts{
 		ParseMode:   "HTML",
-		ReplyMarkup: *premiumizeButtons(&kb),
+		ReplyMarkup: *decorateButtons(&kb),
 	})
 	if err != nil {
 		log.Printf("admin panel edit failed: %v", err)
@@ -809,7 +809,7 @@ func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 		added, skipped, total),
 		&gotgbot.SendMessageOpts{
 			ParseMode: "HTML",
-			ReplyMarkup: *premiumizeButtons(&gotgbot.InlineKeyboardMarkup{
+			ReplyMarkup: *decorateButtons(&gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 					{admBtn("➕ Add More", "admc.addcodes")},
 					{admBtn("⚙️ Panel", "admp.home")},
@@ -832,7 +832,7 @@ func admSettingsBackBtn() gotgbot.InlineKeyboardMarkup {
 			{admBtn("🛠 Settings", "admp.settings")},
 		},
 	}
-	return *premiumizeButtons(&m)
+	return *decorateButtons(&m)
 }
 
 // adminLogSetStart asks the owner for the log chat ID.

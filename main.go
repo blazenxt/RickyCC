@@ -317,7 +317,7 @@ func mainKeyboard(b *gotgbot.Bot, userId int64) gotgbot.InlineKeyboardMarkup {
 			},
 		},
 	}
-	return *premiumizeButtons(&m)
+	return *decorateButtons(&m)
 }
 
 func homeKeyboard() gotgbot.InlineKeyboardMarkup {
@@ -331,7 +331,7 @@ func homeKeyboard() gotgbot.InlineKeyboardMarkup {
 			},
 		},
 	}
-	return *premiumizeButtons(&m)
+	return *decorateButtons(&m)
 }
 
 func welcomeText(firstName string, u *User, isNew bool) string {
@@ -857,7 +857,7 @@ func claim(b *gotgbot.Bot, ctx *ext.Context) error {
 		{Text: "🏠 Home", CallbackData: "home"},
 	})
 	claimKeyboard := gotgbot.InlineKeyboardMarkup{InlineKeyboard: claimButtons}
-	premiumizeButtons(&claimKeyboard)
+	decorateButtons(&claimKeyboard)
 
 	sent, err := b.SendPhoto(user.Id, cardPhotoInput(), &gotgbot.SendPhotoOpts{
 		Caption:     caption,
@@ -1064,7 +1064,7 @@ func broadcast(b *gotgbot.Bot, ctx *ext.Context) error {
 	if reply.ReplyMarkup != nil {
 		button.InlineKeyboard = reply.ReplyMarkup.InlineKeyboard
 	}
-	premiumizeButtons(button) // re-broadcasts get the premium look too
+	decorateButtons(button) // re-broadcasts get the premium look too
 
 	users, err := getAllUsers()
 	if err != nil {

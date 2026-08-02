@@ -118,6 +118,87 @@ func TestPremiumizeButtons(t *testing.T) {
 	}
 }
 
+// Bot API 9.4 colors: destructive = red, claim/verify CTAs = green, key
+// actions = blue, everything else = "" (client default). Rules key off
+// callback data (stable), with URL-button labels as fallback.
+func TestApplyButtonStyles(t *testing.T) {
+	cases := []struct {
+		btn  gotgbot.InlineKeyboardButton
+		want string
+	}{
+		{gotgbot.InlineKeyboardButton{Text: "🎁 Claim Reward", CallbackData: "claim"}, "success"},
+		{gotgbot.InlineKeyboardButton{Text: "✅ Joined — Try Again", CallbackData: "fsj.123"}, "success"},
+		{gotgbot.InlineKeyboardButton{Text: "✅ Joined — Try Again", CallbackData: "fsj"}, "success"},
+		{gotgbot.InlineKeyboardButton{Text: "✅ Unban", CallbackData: "admu.unban.9"}, "success"},
+		{gotgbot.InlineKeyboardButton{Text: "✅ Yes, delete them", CallbackData: "admp.clearok"}, "danger"}, // ✅ glyph, still red
+		{gotgbot.InlineKeyboardButton{Text: "🗑️ Delete User", CallbackData: "admu.del.9"}, "danger"},
+		{gotgbot.InlineKeyboardButton{Text: "✅ Yes, delete", CallbackData: "admu.delok.9"}, "danger"},
+		{gotgbot.InlineKeyboardButton{Text: "🚫 Ban", CallbackData: "admu.ban.9"}, "danger"},
+		{gotgbot.InlineKeyboardButton{Text: "🔄 Reset Claims", CallbackData: "admu.reset.9"}, "danger"},
+		{gotgbot.InlineKeyboardButton{Text: "🧹 Clear All", CallbackData: "admp.fsubclear"}, "danger"},
+		{gotgbot.InlineKeyboardButton{Text: "❌ Remove 2", CallbackData: "admp.admindel.2"}, "danger"},
+		{gotgbot.InlineKeyboardButton{Text: "📊 My Progress", CallbackData: "progress.5"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "🏠 Home", CallbackData: "home"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "🔄 Refresh", CallbackData: "admp.dash"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "⚡ Load Premium Set", CallbackData: "admp.emojipremium"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "🎨 Custom Emojis", CallbackData: "admc.emojis"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "📢 Join Channel 1", Url: "https://t.me/x"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "🔗 Refer & Earn", Url: "https://t.me/share/url?url=x"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "🆘 Support", Url: "https://t.me/help"}, "primary"},
+		{gotgbot.InlineKeyboardButton{Text: "🔙 Back", CallbackData: "admp.home"}, ""},     // nav stays default
+		{gotgbot.InlineKeyboardButton{Text: "👥 Users", CallbackData: "admp.users"}, ""},  // menu stays default
+		{gotgbot.InlineKeyboardButton{Text: "13", CallbackData: "cap.4"}, ""},             // captcha answers untouched
+		{gotgbot.InlineKeyboardButton{Text: "🔗 Random Link", Url: "https://x.test"}, ""}, // unknown URL stays default
+	}
+	for i, c := range cases {
+		if got := buttonStyle(c.btn); got != c.want {
+			t.Fatalf("case %d (%q/%q): style=%q, want %q", i, c.btn.Text, c.btn.CallbackData, got, c.want)
+		}
+	}
+
+	// Whole-keyboard pass + explicit styles are never overridden.
+	kb := &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+		{Text: "🎁 Claim Reward", CallbackData: "claim"},
+		{Text: "preset", CallbackData: "home", Style: "danger"},
+	}}}
+	applyButtonStyles(kb)
+	if kb.InlineKeyboard[0][0].Style != "success" {
+		t.Fatalf("claim not styled: %+v", kb.InlineKeyboard[0][0])
+	}
+	if kb.InlineKeyboard[0][1].Style != "danger" {
+		t.Fatalf("explicit style must be preserved: %+v", kb.InlineKeyboard[0][1])
+	}
+	if applyButtonStyles(nil) != nil {
+		t.Fatal("nil markup should stay nil")
+	}
+}
+
+// decorateButtons chains icons + colors: the Claim button gets BOTH its
+// premium icon and the green success style in one pass.
+func TestDecorateButtons(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+	if err := setEmojiIDs(map[string]string{"gift": "5500000000000000142"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+
+	kb := decorateButtons(&gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+		{Text: "🎁 Claim Reward", CallbackData: "claim"},
+		{Text: "👥 Users", CallbackData: "admp.users"},
+	}}})
+	claim := kb.InlineKeyboard[0][0]
+	if claim.IconCustomEmojiId != "5500000000000000142" || claim.Text != "Claim Reward" {
+		t.Fatalf("icon decoration missing: %+v", claim)
+	}
+	if claim.Style != "success" {
+		t.Fatalf("style decoration missing: %+v", claim)
+	}
+	users := kb.InlineKeyboard[0][1]
+	if users.Style != "" || users.IconCustomEmojiId != "" {
+		t.Fatalf("plain nav button should stay fully default: %+v", users)
+	}
+}
+
 func TestIconPlainEmojiValues(t *testing.T) {
 	setupTestDB(t)
 	loadConfig(0, nil)

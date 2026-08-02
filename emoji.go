@@ -332,6 +332,74 @@ func premiumizeButtons(kb *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboard
 	return kb
 }
 
+// buttonStyle assigns a Bot API 9.4 button color using stable callback data
+// first (labels are just a fallback for URL buttons). "" = client default.
+// Rules are deliberately conservative: destructive actions are ALWAYS red,
+// the claim/verify CTAs green, key informational/nav actions blue, and all
+// other panel buttons keep the default look so screens don't turn into a
+// rainbow.
+func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
+	d := btn.CallbackData
+
+	// 1) Destructive — red must never be ambiguous, even when the label
+	//    starts with a ✅ (e.g. "Yes, delete").
+	switch {
+	case strings.HasPrefix(d, "admp.clearok"), // wipe claimed cards
+		strings.HasPrefix(d, "admp.fsubclear"),  // wipe all fsub channels
+		strings.HasPrefix(d, "admp.admindel."),  // remove an admin
+		strings.HasPrefix(d, "admu.ban."),       // ban a user
+		strings.HasPrefix(d, "admu.del."),       // delete user
+		strings.HasPrefix(d, "admu.delok."),     // delete user, confirmed
+		strings.HasPrefix(d, "admu.reset."):     // reset a user's claims
+		return "danger"
+	}
+
+	// 2) Positive CTAs — claim rewards, confirm joined, unban.
+	if d == "claim" || d == "fsj" || strings.HasPrefix(d, "fsj.") || strings.HasPrefix(d, "admu.unban.") {
+		return "success"
+	}
+
+	// 3) Primary — the main informational/navigational actions.
+	if d == "home" || strings.HasPrefix(d, "progress.") ||
+		d == "admp.dash" || d == "admp.emojipremium" || d == "admc.emojis" {
+		return "primary"
+	}
+
+	// URL buttons have no callback data — style them by role.
+	if btn.Url != "" {
+		t := strings.ToLower(btn.Text)
+		for _, role := range []string{"join channel", "refer", "owner", "support"} {
+			if strings.Contains(t, role) {
+				return "primary"
+			}
+		}
+	}
+	return ""
+}
+
+// applyButtonStyles colors every button via buttonStyle (Bot API 9.4 style
+// field). Explicit pre-set styles are never overridden. In-place, chainable.
+func applyButtonStyles(kb *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboardMarkup {
+	if kb == nil {
+		return kb
+	}
+	for ri := range kb.InlineKeyboard {
+		for bi := range kb.InlineKeyboard[ri] {
+			btn := &kb.InlineKeyboard[ri][bi]
+			if btn.Style == "" {
+				btn.Style = buttonStyle(*btn)
+			}
+		}
+	}
+	return kb
+}
+
+// decorateButtons is the one-stop call applied to every keyboard the bot
+// sends: premium custom-emoji icons (when loaded) + 9.4 colors — always.
+func decorateButtons(kb *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboardMarkup {
+	return applyButtonStyles(premiumizeButtons(kb))
+}
+
 // preloadPremiumEmojiSet auto-loads the curated premium set on boot, but
 // only when (a) NO custom mapping exists yet — an owner's hand-tuned slots
 // are never stomped — and (b) a live probe proves this bot may actually
