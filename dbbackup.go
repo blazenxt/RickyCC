@@ -72,12 +72,12 @@ func runDBBackup(b *gotgbot.Bot, chatID int64, reason string) error {
 	name := fmt.Sprintf("%s-%s.db", backupPrefix, time.Now().UTC().Format("20060102-150405"))
 	sent, err := b.SendDocument(chatID, gotgbot.InputFileByReader(name, bytes.NewReader(data)),
 		&gotgbot.SendDocumentOpts{
-			Caption: fmt.Sprintf(
+			Caption: premiumize(fmt.Sprintf(
 				"💾 <b>%s — database backup</b> <i>(%s)</i>\n\n"+
 					"🕒 %s UTC\n📦 %.1f KB\n\n"+
 					"<i>Kept pinned — the bot restores from this file automatically on the next deploy.</i>",
 				BrandName, reason,
-				time.Now().UTC().Format("02 Jan 2006 15:04"), float64(len(data))/1024),
+				time.Now().UTC().Format("02 Jan 2006 15:04"), float64(len(data))/1024)),
 			ParseMode: "HTML",
 		})
 	if err != nil {

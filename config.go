@@ -339,7 +339,7 @@ func notifyLogChat(b *gotgbot.Bot, text string) {
 		log.Printf("log chat not set — message skipped: %.80s", text)
 		return
 	}
-	if _, err := b.SendMessage(id, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
+	if _, err := b.SendMessage(id, premiumize(text), &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
 		log.Printf("failed to send to log chat %d: %v", id, err)
 	}
 }

@@ -37,30 +37,45 @@ import (
 // delivery can never break.
 var premiumEmojiDefaults = map[string]string{
 	"party":    "6206378324273403309", // 🎉
+	"wave":     "6206212212118263684", // 🙂
 	"trophy":   "6206419981161211268", // 🥇
 	"card":     "6206220960966646470", // 💎
 	"validity": "6206118633370818254", // ⌛
 	"howto":    "6206139863394162614", // 🔖
 	"gift":     "6206027872121918710", // 🎁
+	"users":    "5258362837411045098", // 👤
 	"next":     "6206515969385308049", // 📶
 	"link":     "6206497372176913599", // 🔗
 	"stats":    "6206343625232619150", // 📊
-	"person":   "5258362837411045098", // 👤
+	"person":   "5397971251878732060", // 🧸
 	"iddot":    "6205965994528086727", // 💠
+	"id":       "6206190608432764318", // 📌
 	"lock":     "6203944611119897090", // 🛡
 	"ok":       "6206185428702206246", // ✅
 	"err":      "6206110936789423908", // ❌
 	"warn":     "6206174450765796040", // ⚠️
 	"ban":      "6206396878532121864", // 🚫
 	"box":      "6203886371363364022", // 📥
+	"ticket":   "6205984948218762570", // 🛍
+	"cal":      "6206325217002788818", // ➡️
+	"clock":    "6204251568137574946", // 🔄
+	"name":     "6204162490515855272", // ✏️
 	"shield":   "6203958681432757304", // 🛡
+	"wrench":   "5323284841502883276", // 🛞
 	"robot":    "5276500991108214772", // 🤖
+	"math":     "6206375377925839184", // ➕
 	"num":      "6206131290639439676", // 1️⃣
 	"eyes":     "6206366384264320881", // 👀
 	"spy":      "6206446249181189526", // 🔍
+	"bullet":   "6206141323683042874", // ▶️
 	"spark":    "6203761490894264678", // 🌟
 	"fire":     "6206041890895172990", // ❤️‍🔥
 	"star":     "6206312014273321181", // ⭐️
+	"mega":     "6206080502651164081", // 📣
+	"log":      "6206495649895028694", // 💬
+	"target":   "6203738495639360972", // 💯
+	"sos":      "6206306186002698906", // ❓
+	"palette":  "5201830300312683111", // 💜
 }
 
 var iconDefaults = map[string]string{
@@ -99,6 +114,54 @@ var iconDefaults = map[string]string{
 	"spark":    "✨",
 	"fire":     "🔥",
 	"star":     "⭐",
+	"mega":     "📢",
+	"log":      "🪵",
+	"target":   "🎯",
+	"sos":      "🆘",
+	"palette":  "🎨",
+}
+
+var tgEmojiTagRe = regexp.MustCompile(`<tg-emoji emoji-id="\d+">.*?</tg-emoji>`)
+
+// premiumize replaces remaining raw Unicode emoji occurrences in a message
+// body with their configured premium counterparts. Slots mapped to numeric
+// IDs become <tg-emoji> tags; slots mapped to plain emojis swap the glyph
+// directly. Idempotent: text already inside <tg-emoji> tags is treated as
+// atomic and never re-processed. Buttons are struct fields — never passed
+// through here, per design.
+func premiumize(s string) string {
+	mapping := getEmojiIDs()
+	if len(mapping) == 0 {
+		return s
+	}
+
+	// Only segments OUTSIDE existing tg-emoji tags are transformed, so we can
+	// never nest a new tag inside icon() output (which would break entities).
+	parts := tgEmojiTagRe.Split(s, -1)
+	tags := tgEmojiTagRe.FindAllString(s, -1)
+
+	var sb strings.Builder
+	for i, part := range parts {
+		for slot, v := range mapping {
+			if v == "" {
+				continue
+			}
+			def, ok := iconDefaults[slot]
+			if !ok || def == "" {
+				continue
+			}
+			if isEmojiID(v) {
+				part = strings.ReplaceAll(part, def, `<tg-emoji emoji-id="`+v+`">`+def+`</tg-emoji>`)
+			} else {
+				part = strings.ReplaceAll(part, def, v)
+			}
+		}
+		sb.WriteString(part)
+		if i < len(tags) {
+			sb.WriteString(tags[i])
+		}
+	}
+	return sb.String()
 }
 
 // emojiSlotList renders the slot reference for the admin panel:

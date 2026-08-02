@@ -122,6 +122,52 @@ func TestEmojiSlotListCoversRegistry(t *testing.T) {
 	}
 }
 
+func TestPremiumize(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+
+	in := "📦 Stock\n✅ done\n🎉 hi"
+
+	// No mapping: untouched
+	if got := premiumize(in); got != in {
+		t.Fatalf("premiumize without mappings changed text: %q", got)
+	}
+
+	// Numeric ID mapping: swap default glyph for a tg-emoji tag
+	if err := setEmojiIDs(map[string]string{"box": "6203886371363364022"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+	got := premiumize(in)
+	wantTag := `<tg-emoji emoji-id="6203886371363364022">📦</tg-emoji>`
+	if !strings.Contains(got, wantTag) {
+		t.Fatalf("expected %s in %q", wantTag, got)
+	}
+	if strings.Count(got, "🎉") != 1 { // unmapped glyph stays
+		t.Fatalf("unmapped emoji was altered: %q", got)
+	}
+
+	// Plain emoji mapping specifications swap the glyph as-is
+	if err := setEmojiIDs(map[string]string{"ok": "🔥"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+	if got := premiumize(in); !strings.Contains(got, "🔥") || strings.Contains(got, "✅") {
+		t.Fatalf("plain-emoji premiumize failed: %q", got)
+	}
+
+	// Mixed output coming from icon() must not double-wrap
+	if err := setEmojiIDs(map[string]string{"card": "5402038549988123456"}); err != nil {
+		t.Fatalf("setEmojiIDs: %v", err)
+	}
+	once := premiumize(icon("card"))
+	twice := premiumize(once)
+	if once != twice {
+		t.Fatalf("premiumize is not idempotent over icon() output: %q vs %q", once, twice)
+	}
+	if strings.Count(twice, "<tg-emoji") != 1 {
+		t.Fatalf("icon() output mangled: %q", twice)
+	}
+}
+
 func TestValidateEmojiIDsEmpty(t *testing.T) {
 	if bad := validateEmojiIDs(nil, 0, map[string]string{}); len(bad) != 0 {
 		t.Fatalf("empty candidate should validate clean, got %v", bad)

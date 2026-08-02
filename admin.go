@@ -69,7 +69,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 
 // admEdit is a small helper to swap the panel view.
 func admEdit(b *gotgbot.Bot, msg *gotgbot.Message, text string, kb gotgbot.InlineKeyboardMarkup) {
-	_, _, err := msg.EditText(b, text, &gotgbot.EditMessageTextOpts{
+	_, _, err := msg.EditText(b, premiumize(text), &gotgbot.EditMessageTextOpts{
 		ParseMode:   "HTML",
 		ReplyMarkup: kb,
 	})
@@ -1128,12 +1128,12 @@ func adminHowtoStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(fmt.Sprintf(
 		"📖 <b>How-to-Use Text</b>\n\n"+
 			"Send the instructions shown under every delivered card (plain text, up to 700 characters).\n\n"+
 			"<b>Current:</b>\n<i>%s</i>\n\n"+
 			"Send <code>default</code> to restore the built-in text.\n/cancel to abort.",
-		esc(truncate(getHowtoText(), 300))),
+		esc(truncate(getHowtoText(), 300)))),
 		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 	return handlers.NextConversationState(admStateHowto)
 }
@@ -1201,7 +1201,7 @@ func adminEmojisStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, _ = query.Answer(b, nil)
-	_, _, _ = ctx.EffectiveMessage.EditText(b, fmt.Sprintf(
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(fmt.Sprintf(
 		"🎨 <b>Custom Emojis</b>\n\n"+
 			"Replace the bot's standard icons — they change in all message texts and the reward-delivery caption.\n"+
 			"<i>Buttons can't render custom emojis (Telegram limit) — fallback icons show there automatically.</i>\n\n"+
@@ -1216,7 +1216,7 @@ func adminEmojisStart(b *gotgbot.Bot, ctx *ext.Context) error {
 			"<b>Available slots:</b>\n%s\n\n"+
 			"<b>Currently set:</b>\n%s\n\n"+
 			"Send <code>off</code> to clear all. /cancel to abort.",
-		emojiSlotList(), curStr),
+		emojiSlotList(), curStr)),
 		&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 	return handlers.NextConversationState(admStateEmojis)
 }

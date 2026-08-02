@@ -509,7 +509,7 @@ func completeRegistration(b *gotgbot.Bot, ctx *ext.Context, payload string) erro
 
 func help(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	text := fmt.Sprintf(`
+	text := premiumize(fmt.Sprintf(`
 <b>%s — Help</b>
 
 <b>How it works</b>
@@ -533,7 +533,7 @@ func help(b *gotgbot.Bot, ctx *ext.Context) error {
 /broadcast - 📢 Broadcast a message to all users
 
 ⚠️ <i>Owner commands are restricted to the bot owner.</i>
-`, BrandName, ReferralTarget, ReferralTarget, ReferralTarget*2, ReferralTarget*5)
+`, BrandName, ReferralTarget, ReferralTarget, ReferralTarget*2, ReferralTarget*5))
 
 	keyboard := homeKeyboard()
 	_, _ = msg.Reply(b, text, &gotgbot.SendMessageOpts{
@@ -961,9 +961,9 @@ func stock(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	_, _ = msg.Reply(b, fmt.Sprintf(
+	_, _ = msg.Reply(b, premiumize(fmt.Sprintf(
 		"📦 <b>Reward Stock</b>\n\n✅ Available: <b>%d</b>\n🎁 Claimed: <b>%d</b>",
-		available, claimed),
+		available, claimed)),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return nil
 }
@@ -985,13 +985,13 @@ func stats(b *gotgbot.Bot, ctx *ext.Context) error {
 	available, _ := countAvailableCards()
 	claimed, _ := countClaimedCards()
 
-	text := fmt.Sprintf(
+	text := premiumize(fmt.Sprintf(
 		"📊 <b>Bot Statistics</b>\n\n"+
 			"👥 Total Users: <b>%d</b>\n"+
 			"🎁 Users Claimed: <b>%d</b>\n"+
 			"📦 Cards Available: <b>%d</b>\n"+
 			"✅ Cards Claimed: <b>%d</b>",
-		len(allUsers), claimedUsers, available, claimed)
+		len(allUsers), claimedUsers, available, claimed))
 	_, _ = msg.Reply(b, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return nil
 }
