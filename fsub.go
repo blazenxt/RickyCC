@@ -87,7 +87,16 @@ func parseFsubRetryData(data string) string {
 
 func lockFsubText() string {
 	return icon("lock") + " <b>Access Locked</b>\n\n" +
-		"To use this bot, join ALL of our channels first, then tap <b>Joined — Try Again</b>."
+		"To use this bot, join ALL of our channels first, then tap <b>Joined — Try Again</b>.\n\n" +
+		"<i>Private channel needs admin approval? Just send the join request — the bot counts it automatically. ✅</i>"
+}
+
+// fsubSatisfied reports whether a channel counts as joined for the
+// force-join gate: real membership, or a recorded PENDING join request
+// (admin-approval channels — the user did their part; approval itself is
+// outside their control).
+func fsubSatisfied(status string, pendingRequest bool) bool {
+	return memberStatuses[status] || pendingRequest
 }
 
 // fsubMissingButtons returns one join button (with a working invite link)
@@ -106,7 +115,8 @@ func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboar
 			status = userMember.MergeChatMember().Status
 		}
 
-		if !memberStatuses[status] {
+		pending := hasJoinRequest(chatID, userId)
+		if !fsubSatisfied(status, pending) {
 			inviteLink, err := fetchInviteLink(b, chatID)
 			if err != nil || inviteLink == "" {
 				return nil, fmt.Errorf("invite link not available for chat %d", chatID)
@@ -114,6 +124,9 @@ func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboar
 			buttons = append(buttons, []gotgbot.InlineKeyboardButton{
 				{Text: fmt.Sprintf("📢 Join Channel %d", i+1), Url: inviteLink},
 			})
+		} else if memberStatuses[status] && pending {
+			// Real member now — the stored pending marker is obsolete.
+			deleteJoinRequest(chatID, userId)
 		}
 
 		time.Sleep(300 * time.Millisecond)
@@ -159,6 +172,27 @@ func fSub(b *gotgbot.Bot, userId int64, arg string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// joinRequestHandler receives chat_join_request updates: a user tapping
+// "Request to Join" on an admin-approval channel. The request is stored so
+// fsubMissingButtons can count it as satisfied — Telegram's getChatMember
+// has no "pending" status, so this update is the ONLY way to know.
+//
+// The bot receives these updates for every chat where it is an admin, so
+// no fsub-config filtering is applied here — harmless extra rows, and
+// channels added to fsub later still match older requests.
+func joinRequestHandler(b *gotgbot.Bot, ctx *ext.Context) error {
+	req := ctx.Update.ChatJoinRequest
+	if req == nil {
+		return nil
+	}
+	if err := saveJoinRequest(req.Chat.Id, req.From.Id); err != nil {
+		log.Printf("failed to store join request (chat %d, user %d): %v", req.Chat.Id, req.From.Id, err)
+		return nil // never wedge the dispatcher on bookkeeping
+	}
+	log.Printf("📥 pending join request stored: user %d → chat %d", req.From.Id, req.Chat.Id)
+	return nil
 }
 
 // fsubRetryCallback backs "✅ Joined — Try Again": re-checks membership and

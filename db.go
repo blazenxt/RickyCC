@@ -144,6 +144,12 @@ CREATE TABLE IF NOT EXISTS settings (
     howto_text      TEXT    NOT NULL DEFAULT '',
     emoji_ids       TEXT    NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS join_requests (
+    channel_id   INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    requested_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, user_id)
+);
 `
 
 // schemaPostgres mirrors schemaSQLite: BIGINT for Telegram IDs / unix
@@ -180,6 +186,12 @@ CREATE TABLE IF NOT EXISTS settings (
     support_url     TEXT    NOT NULL DEFAULT '',
     howto_text      TEXT    NOT NULL DEFAULT '',
     emoji_ids       TEXT    NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS join_requests (
+    channel_id   BIGINT NOT NULL,
+    user_id      BIGINT NOT NULL,
+    requested_at BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, user_id)
 );
 `
 
@@ -753,4 +765,35 @@ func clearClaimedCards() (int64, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+// saveJoinRequest records a pending admin-approval join request (private
+// channels/groups with "join by request"). Stored upsert-style so repeat
+// requests just refresh the timestamp.
+func saveJoinRequest(channelID, userID int64) error {
+	q := `INSERT OR REPLACE INTO join_requests (channel_id, user_id, requested_at) VALUES (?, ?, ?)`
+	if dialect == dialectPostgres {
+		q = `INSERT INTO join_requests (channel_id, user_id, requested_at) VALUES ($1, $2, $3)
+		     ON CONFLICT (channel_id, user_id) DO UPDATE SET requested_at = EXCLUDED.requested_at`
+	}
+	_, err := db.Exec(q, channelID, userID, time.Now().Unix())
+	return err
+}
+
+// hasJoinRequest reports whether the user has a recorded pending join
+// request for this channel.
+func hasJoinRequest(channelID, userID int64) bool {
+	var n int
+	err := db.QueryRow(rebind(
+		`SELECT COUNT(1) FROM join_requests WHERE channel_id = ? AND user_id = ?`),
+		channelID, userID).Scan(&n)
+	return err == nil && n > 0
+}
+
+// deleteJoinRequest drops a stored request (e.g. the user is now a real
+// member, so the pending marker is obsolete).
+func deleteJoinRequest(channelID, userID int64) {
+	_, _ = db.Exec(rebind(
+		`DELETE FROM join_requests WHERE channel_id = ? AND user_id = ?`),
+		channelID, userID)
 }

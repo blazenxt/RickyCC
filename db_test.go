@@ -522,3 +522,34 @@ func TestSettings(t *testing.T) {
 		t.Fatal("clearing how-to should restore the default text")
 	}
 }
+
+// Pending join requests (admin-approval force-join channels) must round
+// trip: save → visible, re-save → no error/duplicate, delete → gone, and
+// rows must stay scoped per (channel, user) pair.
+func TestJoinRequests(t *testing.T) {
+	setupTestDB(t)
+
+	if hasJoinRequest(-1001, 42) {
+		t.Fatal("unexpected join request before saving")
+	}
+	if err := saveJoinRequest(-1001, 42); err != nil {
+		t.Fatalf("saveJoinRequest: %v", err)
+	}
+	if !hasJoinRequest(-1001, 42) {
+		t.Fatal("join request missing after saving")
+	}
+
+	// re-saving the same pair must behave as an upsert, not an error
+	if err := saveJoinRequest(-1001, 42); err != nil {
+		t.Fatalf("saveJoinRequest duplicate: %v", err)
+	}
+
+	if hasJoinRequest(-1001, 43) || hasJoinRequest(-1002, 42) {
+		t.Fatal("join request leaked across users/channels")
+	}
+
+	deleteJoinRequest(-1001, 42)
+	if hasJoinRequest(-1001, 42) {
+		t.Fatal("join request still present after delete")
+	}
+}

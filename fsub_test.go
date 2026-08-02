@@ -50,3 +50,28 @@ func TestLockFsubText(t *testing.T) {
 		t.Fatalf("lock text lost its header: %q", txt)
 	}
 }
+
+// The force-join gate counts real membership AND recorded pending join
+// requests (admin-approval channels); anything else stays locked.
+func TestFsubSatisfied(t *testing.T) {
+	cases := []struct {
+		status  string
+		pending bool
+		want    bool
+	}{
+		{"member", false, true},
+		{"administrator", false, true},
+		{"creator", false, true},
+		{"left", true, true},   // join request pending → counts
+		{"kicked", true, true}, // request recorded before ban → still counts
+		{"left", false, false},
+		{"kicked", false, false},
+		{"restricted", false, false},
+		{"", false, false},
+	}
+	for _, c := range cases {
+		if got := fsubSatisfied(c.status, c.pending); got != c.want {
+			t.Errorf("fsubSatisfied(%q, %v) = %v, want %v", c.status, c.pending, got, c.want)
+		}
+	}
+}

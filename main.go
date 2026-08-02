@@ -16,6 +16,8 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/chatjoinrequest"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/chatmember"
 
 	_ "github.com/joho/godotenv/autoload"
 	_ "modernc.org/sqlite"
@@ -31,7 +33,7 @@ var (
 	Port           string
 	secretToken    string
 	OwnerID        int64
-	allowedUpdates = []string{"message", "callback_query"}
+	allowedUpdates = []string{"message", "callback_query", "chat_join_request", "my_chat_member"}
 )
 
 func main() {
@@ -141,6 +143,12 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("home"), home))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cap."), captchaCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("fsj"), fsubRetryCallback))
+
+	// Admin-approval force-join: record pending join requests so the gate
+	// can count them as satisfied.
+	dispatcher.AddHandler(handlers.NewChatJoinRequest(chatjoinrequest.All, joinRequestHandler))
+	// Private-chats-only policy: auto-leave any group (log chat exempt).
+	dispatcher.AddHandler(handlers.NewMyChatMember(chatmember.All, guardBotChatMember))
 
 	// Admin panel
 	dispatcher.AddHandler(handlers.NewCommand("admin", adminCmd))
@@ -359,6 +367,14 @@ func welcomeText(firstName string, u *User, isNew bool) string {
 // ---------- User commands ----------
 
 func start(b *gotgbot.Bot, ctx *ext.Context) error {
+	// Private chats only — normally the my_chat_member guard leaves groups
+	// instantly; this covers the race where /start lands first.
+	if msg := ctx.EffectiveMessage; msg != nil && msg.Chat.Type != "private" {
+		_, _ = msg.Reply(b, "⚠️ I work only in private chats — start me directly: @"+b.User.Username, nil)
+		_, _ = b.LeaveChat(msg.Chat.Id, nil)
+		return nil
+	}
+
 	user := ctx.EffectiveUser
 	args := ctx.Args()[1:]
 
