@@ -249,7 +249,7 @@ func main() {
 	startDBBackupTicker(bot, envLogChatID)
 	if restoredFromBackup && envLogChatID != 0 {
 		_, _ = bot.SendMessage(envLogChatID,
-			"♻️ <b>Database restored</b> from the pinned backup — all users, cards and settings are back after this redeploy.",
+			premiumize("♻️ <b>Database restored</b> from the pinned backup — all users, cards and settings are back after this redeploy."),
 			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	}
 	updater.Idle()
@@ -952,9 +952,9 @@ func addCard(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	total, _ := countAvailableCards()
-	_, _ = msg.Reply(b, fmt.Sprintf(
+	_, _ = msg.Reply(b, premiumize(fmt.Sprintf(
 		"✅ <b>Added %d card(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
-		added, skipped, total),
+		added, skipped, total)),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return nil
 }

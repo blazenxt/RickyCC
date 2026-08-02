@@ -860,9 +860,9 @@ func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	log.Printf("admin added %d cards (%d skipped)", added, skipped)
 	total, _ := countAvailableCards()
-	_, _ = msg.Reply(b, fmt.Sprintf(
+	_, _ = msg.Reply(b, premiumize(fmt.Sprintf(
 		"✅ <b>Added %d card(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
-		added, skipped, total),
+		added, skipped, total)),
 		&gotgbot.SendMessageOpts{
 			ParseMode: "HTML",
 			ReplyMarkup: *decorateButtons(&gotgbot.InlineKeyboardMarkup{
