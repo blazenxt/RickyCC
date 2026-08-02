@@ -134,6 +134,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("claim"), claim))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("home"), home))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cap."), captchaCallback))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("fsj"), fsubRetryCallback))
 
 	// Admin panel
 	dispatcher.AddHandler(handlers.NewCommand("admin", adminCmd))
@@ -356,7 +357,6 @@ func welcomeText(firstName string, u *User, isNew bool) string {
 // ---------- User commands ----------
 
 func start(b *gotgbot.Bot, ctx *ext.Context) error {
-	msg := ctx.EffectiveMessage
 	user := ctx.EffectiveUser
 	args := ctx.Args()[1:]
 
@@ -367,12 +367,22 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	isMember, err := fSub(b, user.Id, userArgs)
 	if err != nil {
-		_, _ = msg.Reply(b, "❌ An error occurred. Please try again later.", nil)
+		_, _ = ctx.EffectiveMessage.Reply(b, "❌ An error occurred. Please try again later.", nil)
 		return fmt.Errorf("start: %v", err)
 	}
 	if !isMember {
 		return ext.EndGroups
 	}
+
+	return continueAfterFsub(b, ctx, userArgs)
+}
+
+// continueAfterFsub is the shared post-force-join path for /start and the
+// "Joined — Try Again" callback: banned check, then the home screen for
+// existing users, or the captcha gate for brand-new ones.
+func continueAfterFsub(b *gotgbot.Bot, ctx *ext.Context, userArgs string) error {
+	msg := ctx.EffectiveMessage
+	user := ctx.EffectiveUser
 
 	existingUser, err := getUser(user.Id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
