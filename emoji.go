@@ -27,6 +27,42 @@ import (
 //   - if a send ever fails, stripTGEmoji() downgrades messages back to the
 //     standard fallbacks so delivery can never wedge.
 
+// premiumEmojiDefaults is a curated one-tap premium look, sourced from
+// popular public premium emoji packs (owner-supplied 124-ID pool).
+//
+// Bots may only send PUBLIC custom emoji when they hold an extra username
+// bought on Fragment. That's why this set is enabled exclusively through the
+// admin panel's "⚡ Load Premium Set" action, which first probes with a live
+// test-send — applying it on an unsupported bot is impossible, so message
+// delivery can never break.
+var premiumEmojiDefaults = map[string]string{
+	"party":    "6206378324273403309", // 🎉
+	"trophy":   "6206419981161211268", // 🥇
+	"card":     "6206220960966646470", // 💎
+	"validity": "6206118633370818254", // ⌛
+	"howto":    "6206139863394162614", // 🔖
+	"gift":     "6206027872121918710", // 🎁
+	"next":     "6206515969385308049", // 📶
+	"link":     "6206497372176913599", // 🔗
+	"stats":    "6206343625232619150", // 📊
+	"person":   "5258362837411045098", // 👤
+	"iddot":    "6205965994528086727", // 💠
+	"lock":     "6203944611119897090", // 🛡
+	"ok":       "6206185428702206246", // ✅
+	"err":      "6206110936789423908", // ❌
+	"warn":     "6206174450765796040", // ⚠️
+	"ban":      "6206396878532121864", // 🚫
+	"box":      "6203886371363364022", // 📥
+	"shield":   "6203958681432757304", // 🛡
+	"robot":    "5276500991108214772", // 🤖
+	"num":      "6206131290639439676", // 1️⃣
+	"eyes":     "6206366384264320881", // 👀
+	"spy":      "6206446249181189526", // 🔍
+	"spark":    "6203761490894264678", // 🌟
+	"fire":     "6206041890895172990", // ❤️‍🔥
+	"star":     "6206312014273321181", // ⭐️
+}
+
 var iconDefaults = map[string]string{
 	"party":    "🎉",
 	"wave":     "👋",

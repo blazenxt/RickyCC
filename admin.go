@@ -131,7 +131,7 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 			{admBtn("🪵 Set Log Chat", "admc.logset")},
 			{admBtn("🎯 Referral Target", "admc.target"), admBtn(toggleLabel, "admp.claimstoggle")},
 			{admBtn("🆘 Support Link", "admc.support"), admBtn("📖 How-to Text", "admc.howto")},
-			{admBtn("🎨 Custom Emojis", "admc.emojis")},
+			{admBtn("🎨 Custom Emojis", "admc.emojis"), admBtn("⚡ Load Premium Set", "admp.emojipremium")},
 			admBackBtn(),
 		},
 	}
@@ -309,6 +309,45 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		log.Printf("admin toggled claims: paused=%v", newState)
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: label, ShowAlert: newState})
+		text, kb := admSettingsView()
+		admEdit(b, msg, text, kb)
+
+	case "emojipremium":
+		// One-tap curated premium look — gated behind a live probe so it can
+		// never break message delivery on bots without public-emoji rights.
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "⏳ Probing premium emoji support…"})
+
+		probe := map[string]string{}
+		n := 0
+		for s, id := range premiumEmojiDefaults {
+			probe[s] = id
+			n++
+			if n >= 3 {
+				break
+			}
+		}
+		if bad := validateEmojiIDs(b, query.From.Id, probe); len(bad) > 0 {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "❌ This bot can't send public custom emojis — it needs an extra username bought on Fragment. Use a bot-owned pack or plain emojis instead.",
+				ShowAlert: true,
+			})
+			return nil
+		}
+
+		next := make(map[string]string, len(premiumEmojiDefaults))
+		for s, id := range premiumEmojiDefaults {
+			next[s] = id
+		}
+		if err := setEmojiIDs(next); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		log.Printf("admin loaded the premium emoji set (%d slots)", len(next))
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      fmt.Sprintf("⚡ Premium set loaded — %d icons upgraded!", len(next)),
+			ShowAlert: true,
+		})
 		text, kb := admSettingsView()
 		admEdit(b, msg, text, kb)
 

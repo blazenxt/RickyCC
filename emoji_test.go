@@ -127,3 +127,24 @@ func TestValidateEmojiIDsEmpty(t *testing.T) {
 		t.Fatalf("empty candidate should validate clean, got %v", bad)
 	}
 }
+
+// The curated premium set must only reference real slots, hold well-formed
+// numeric IDs and never reuse an ID twice.
+func TestPremiumEmojiDefaultsIntegrity(t *testing.T) {
+	if len(premiumEmojiDefaults) < 20 {
+		t.Fatalf("premium set unexpectedly small: %d slots", len(premiumEmojiDefaults))
+	}
+	seen := map[string]string{}
+	for slot, id := range premiumEmojiDefaults {
+		if _, ok := iconDefaults[slot]; !ok {
+			t.Fatalf("premium set maps unknown slot %q", slot)
+		}
+		if !isEmojiID(id) {
+			t.Fatalf("premium set slot %q has malformed ID %q", slot, id)
+		}
+		if prev, dup := seen[id]; dup {
+			t.Fatalf("ID %s used for both %q and %q", id, prev, slot)
+		}
+		seen[id] = slot
+	}
+}
