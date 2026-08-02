@@ -53,6 +53,12 @@ var (
 // runDBBackup checkpoints the WAL, copies bot.db, uploads it to the backup
 // chat and pins it (replacing our previous pin).
 func runDBBackup(b *gotgbot.Bot, chatID int64, reason string) error {
+	// Managed PostgreSQL persists across redeploys — a Telegram-pinned SQLite
+	// file neither exists nor is needed there.
+	if UsingPostgres() {
+		log.Printf("db backup skipped (%s): PostgreSQL manages persistence", reason)
+		return errors.New("backups not needed: running on managed PostgreSQL (persists across redeploys)")
+	}
 	if chatID == 0 {
 		return errors.New("no backup chat configured (LOGGER_ID is not set)")
 	}
@@ -104,6 +110,10 @@ func runDBBackup(b *gotgbot.Bot, chatID int64, reason string) error {
 
 // startDBBackupTicker runs scheduled backups forever (first one right after boot).
 func startDBBackupTicker(b *gotgbot.Bot, chatID int64) {
+	if UsingPostgres() {
+		log.Printf("db backup ticker disabled: PostgreSQL manages persistence")
+		return
+	}
 	if chatID == 0 {
 		log.Println("💾 auto-backup disabled — set LOGGER_ID (and pin rights) to enable DB backup & auto-restore")
 		return
@@ -129,6 +139,11 @@ func startDBBackupTicker(b *gotgbot.Bot, chatID int64) {
 // container), it downloads the newest pinned backup from the backup chat.
 // Any failure is logged and the bot simply starts with a fresh database.
 func maybeRestoreDB(b *gotgbot.Bot, token string, chatID int64, path string) {
+	// PostgreSQL mode: no local file exists to restore — the managed
+	// database keeps everything.
+	if UsingPostgres() {
+		return
+	}
 	if _, err := os.Stat(path); err == nil {
 		return // local database already exists — nothing to restore
 	}

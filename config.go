@@ -36,12 +36,15 @@ const defaultHowto = "Copy the card and redeem it right away. " +
 func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	fsubJSON, _ := json.Marshal(envFsubIDs)
 
-	// Ensure the single settings row exists (seeded from env on first boot)
-	_, err := db.Exec(
-		`INSERT OR IGNORE INTO settings (id, log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids)
-		 VALUES (1, ?, ?, ?, 0, '[]')`,
-		envLogChatID, string(fsubJSON), ReferralTarget,
-	)
+	// Ensure the single settings row exists (seeded from env on first boot).
+	// "Skip if present" is dialect-specific: SQLite OR IGNORE / Postgres ON CONFLICT.
+	seedQ := `INSERT OR IGNORE INTO settings (id, log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids)
+		 VALUES (1, ?, ?, ?, 0, '[]')`
+	if UsingPostgres() {
+		seedQ = `INSERT INTO settings (id, log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids)
+		 VALUES (1, $1, $2, $3, 0, '[]') ON CONFLICT (id) DO NOTHING`
+	}
+	_, err := db.Exec(seedQ, envLogChatID, string(fsubJSON), ReferralTarget)
 	if err != nil {
 		log.Printf("config: failed to seed settings: %v", err)
 	}
@@ -90,7 +93,7 @@ func getLogChat() int64 {
 }
 
 func setLogChat(id int64) error {
-	if _, err := db.Exec("UPDATE settings SET log_chat_id = ? WHERE id = 1", id); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET log_chat_id = ? WHERE id = 1"), id); err != nil {
 		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	cfgMu.Lock()
@@ -107,7 +110,7 @@ func getFsubChannels() []int64 {
 
 func saveFsubChannels(next []int64) error {
 	data, _ := json.Marshal(next)
-	if _, err := db.Exec("UPDATE settings SET fsub_channels = ? WHERE id = 1", string(data)); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET fsub_channels = ? WHERE id = 1"), string(data)); err != nil {
 		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	cfgMu.Lock()
@@ -161,7 +164,7 @@ func setReferralTarget(n int) error {
 	if n < 1 {
 		return fmt.Errorf("target must be at least 1")
 	}
-	if _, err := db.Exec("UPDATE settings SET referral_target = ? WHERE id = 1", n); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET referral_target = ? WHERE id = 1"), n); err != nil {
 		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	ReferralTarget = n
@@ -173,7 +176,7 @@ func setClaimsPaused(paused bool) error {
 	if paused {
 		flag = 1
 	}
-	if _, err := db.Exec("UPDATE settings SET claims_paused = ? WHERE id = 1", flag); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET claims_paused = ? WHERE id = 1"), flag); err != nil {
 		return fmt.Errorf("failed to save settings: %v", err)
 	}
 	ClaimsPaused = paused
@@ -190,7 +193,7 @@ func getSupportURL() string {
 
 // setSupportURL sets the URL behind the 🆘 Support button ("" hides it).
 func setSupportURL(url string) error {
-	if _, err := db.Exec("UPDATE settings SET support_url = ? WHERE id = 1", url); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET support_url = ? WHERE id = 1"), url); err != nil {
 		return fmt.Errorf("failed to save support link: %v", err)
 	}
 	cfgMu.Lock()
@@ -211,7 +214,7 @@ func getHowtoText() string {
 
 // setHowtoText stores the how-to-use text ("" restores the default).
 func setHowtoText(text string) error {
-	if _, err := db.Exec("UPDATE settings SET howto_text = ? WHERE id = 1", text); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET howto_text = ? WHERE id = 1"), text); err != nil {
 		return fmt.Errorf("failed to save how-to text: %v", err)
 	}
 	cfgMu.Lock()
@@ -247,7 +250,7 @@ func getAdminIDs() []int64 {
 
 func saveAdminIDs(next []int64) error {
 	data, _ := json.Marshal(next)
-	if _, err := db.Exec("UPDATE settings SET admin_ids = ? WHERE id = 1", string(data)); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET admin_ids = ? WHERE id = 1"), string(data)); err != nil {
 		return fmt.Errorf("failed to save admins: %v", err)
 	}
 	cfgMu.Lock()
@@ -316,7 +319,7 @@ func setEmojiIDs(next map[string]string) error {
 		next = map[string]string{}
 	}
 	data, _ := json.Marshal(next)
-	if _, err := db.Exec("UPDATE settings SET emoji_ids = ? WHERE id = 1", string(data)); err != nil {
+	if _, err := db.Exec(rebind("UPDATE settings SET emoji_ids = ? WHERE id = 1"), string(data)); err != nil {
 		return fmt.Errorf("failed to save custom emojis: %v", err)
 	}
 	cfgMu.Lock()

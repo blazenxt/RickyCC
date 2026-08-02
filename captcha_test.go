@@ -200,7 +200,7 @@ func TestCaptchaRenderPremiumized(t *testing.T) {
 	loadConfig(0, nil)
 
 	star := iconDefaults["star"] // use the exact registry glyph
-	apple := "🍎"                // not a registry default → must never be touched
+	apple := "🍎"                 // not a registry default → must never be touched
 	c := &pendingCaptcha{
 		prompt:    iconDefaults["eyes"] + " Count carefully!\n\n" + star + " " + apple + " " + star + "\n\nHow many <b>" + star + "</b> can you see?",
 		options:   []string{"2", "1", "3", "4", "5"},

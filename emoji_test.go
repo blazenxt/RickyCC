@@ -140,17 +140,17 @@ func TestApplyButtonStyles(t *testing.T) {
 		{gotgbot.InlineKeyboardButton{Text: "📊 My Progress", CallbackData: "progress.5"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🏠 Home", CallbackData: "home"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🔄 Refresh", CallbackData: "admp.dash"}, "primary"},
-		{gotgbot.InlineKeyboardButton{Text: "➕ Add Cards", CallbackData: "admc.addcodes"}, "success"},   // create = green
+		{gotgbot.InlineKeyboardButton{Text: "➕ Add Cards", CallbackData: "admc.addcodes"}, "success"},  // create = green
 		{gotgbot.InlineKeyboardButton{Text: "➕ Add Channel", CallbackData: "admc.fsubadd"}, "success"}, // create = green
 		{gotgbot.InlineKeyboardButton{Text: "➕ Add Admin", CallbackData: "admc.adminadd"}, "success"},  // create = green
 		{gotgbot.InlineKeyboardButton{Text: "⚡ Load Premium Set", CallbackData: "admp.emojipremium"}, "success"},
 		{gotgbot.InlineKeyboardButton{Text: "📢 Join Channel 1", Url: "https://t.me/x"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🔗 Refer & Earn", Url: "https://t.me/share/url?url=x"}, "primary"},
 		{gotgbot.InlineKeyboardButton{Text: "🆘 Support", Url: "https://t.me/help"}, "primary"},
-		{gotgbot.InlineKeyboardButton{Text: "🔙 Back", CallbackData: "admp.home"}, "primary"},       // nav = blue
-		{gotgbot.InlineKeyboardButton{Text: "👥 Users", CallbackData: "admp.users"}, "primary"},     // menu = blue
-		{gotgbot.InlineKeyboardButton{Text: "13", CallbackData: "cap.4"}, "primary"},                // captcha answers = blue
-		{gotgbot.InlineKeyboardButton{Text: "🔗 Random Link", Url: "https://x.test"}, "primary"},    // any button gets a color
+		{gotgbot.InlineKeyboardButton{Text: "🔙 Back", CallbackData: "admp.home"}, "primary"},    // nav = blue
+		{gotgbot.InlineKeyboardButton{Text: "👥 Users", CallbackData: "admp.users"}, "primary"},  // menu = blue
+		{gotgbot.InlineKeyboardButton{Text: "13", CallbackData: "cap.4"}, "primary"},            // captcha answers = blue
+		{gotgbot.InlineKeyboardButton{Text: "🔗 Random Link", Url: "https://x.test"}, "primary"}, // any button gets a color
 		{gotgbot.InlineKeyboardButton{Text: "📢 Force-Join Setup", CallbackData: "admp.fsub"}, "primary"},
 	}
 	for i, c := range cases {

@@ -4,18 +4,49 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
 
 // setupTestDB opens a fresh throwaway SQLite database for each test.
+// It always uses the embedded engine directly — a DATABASE_URL leaking in
+// from the environment must never reroute tests to a live server.
 func setupTestDB(t *testing.T) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
-	if err := initDB(path); err != nil {
+	if err := initSQLite(path); err != nil {
 		t.Fatalf("initDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+}
+
+// rebind must translate ? placeholders to $N only in Postgres mode.
+func TestRebind(t *testing.T) {
+	defer func() { dialect = dialectSQLite }()
+
+	dialect = dialectPostgres
+	q := "UPDATE users SET claims = claims + 1, has_claimed = 1 WHERE id = ? AND claims = ? LIMIT ?"
+	want := "UPDATE users SET claims = claims + 1, has_claimed = 1 WHERE id = $1 AND claims = $2 LIMIT $3"
+	if got := rebind(q); got != want {
+		t.Fatalf("postgres rebind:\n got %q\nwant %q", got, want)
+	}
+	if got := rebind("SELECT 1"); got != "SELECT 1" {
+		t.Fatalf("rebind without placeholders changed the query: %q", got)
+	}
+
+	dialect = dialectSQLite
+	if got := rebind("DELETE FROM users WHERE id = ?"); got != "DELETE FROM users WHERE id = ?" {
+		t.Fatalf("sqlite queries must pass through untouched: %q", got)
+	}
+
+	// Postgres schema must not carry SQLite-only syntax.
+	if strings.Contains(schemaPostgres, "AUTOINCREMENT") {
+		t.Fatal("postgres schema contains AUTOINCREMENT")
+	}
+	if !strings.Contains(schemaPostgres, "BIGSERIAL PRIMARY KEY") {
+		t.Fatal("postgres cards table lost its autoincrement id")
+	}
 }
 
 // fakeReferredID hands out unique IDs for seeded (fake) referred users.

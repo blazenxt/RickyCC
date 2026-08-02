@@ -352,12 +352,12 @@ func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
 	//    starts with a ✅ (e.g. "Yes, delete").
 	switch {
 	case strings.HasPrefix(d, "admp.clearok"), // wipe claimed cards
-		strings.HasPrefix(d, "admp.fsubclear"),  // wipe all fsub channels
-		strings.HasPrefix(d, "admp.admindel."),  // remove an admin
-		strings.HasPrefix(d, "admu.ban."),       // ban a user
-		strings.HasPrefix(d, "admu.del."),       // delete user
-		strings.HasPrefix(d, "admu.delok."),     // delete user, confirmed
-		strings.HasPrefix(d, "admu.reset."):     // reset a user's claims
+		strings.HasPrefix(d, "admp.fsubclear"), // wipe all fsub channels
+		strings.HasPrefix(d, "admp.admindel."), // remove an admin
+		strings.HasPrefix(d, "admu.ban."),      // ban a user
+		strings.HasPrefix(d, "admu.del."),      // delete user
+		strings.HasPrefix(d, "admu.delok."),    // delete user, confirmed
+		strings.HasPrefix(d, "admu.reset."):    // reset a user's claims
 		return "danger"
 	}
 

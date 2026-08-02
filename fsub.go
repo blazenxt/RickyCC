@@ -86,7 +86,7 @@ func parseFsubRetryData(data string) string {
 }
 
 func lockFsubText() string {
-	return icon("lock")+" <b>Access Locked</b>\n\n" +
+	return icon("lock") + " <b>Access Locked</b>\n\n" +
 		"To use this bot, join ALL of our channels first, then tap <b>Joined — Try Again</b>."
 }
 

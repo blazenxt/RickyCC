@@ -29,6 +29,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 | `OWNER_ID` | ✅ | Your numeric Telegram ID (from [@userinfobot](https://t.me/userinfobot)) |
 | `LOGGER_ID` | 💾 | Log chat ID — also the **auto-backup & restore chat** (bot needs pin rights there). Strongly recommended! |
 | `FSUB_IDS` | ➖ | Comma-separated force-join channel IDs — seed only, changeable later |
+| `DATABASE_URL` | ➖ | PostgreSQL connection string — **Railway injects it automatically** when you add the PostgreSQL plugin. When set, ALL data persists across redeploys (SQLite + TG backups bypassed) |
 | `DB_PATH` | ➖ | SQLite file location (default `bot.db`, `/data` in Docker) |
 | `PORT` | ➖ | Auto-set by PaaS — enables the built-in health-check server |
 | `WEBHOOK_URL`, `SECRET_TOKEN` | ➖ | Switch from polling to webhook mode (advanced) |
@@ -36,7 +37,7 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 **Platform notes**
 
 - 🟣 **Heroku** — uses `app.json` + `Procfile` (Go buildpack, `worker` dyno). ⚠️ Heroku's filesystem is *ephemeral*: `bot.db` resets whenever the dyno restarts (~daily). Great for testing — for living data prefer the options below.
-- 🚂 **Railway** — auto-detects the `Dockerfile` (`railway.json` pins builder + start command). **Recommended:** attach a **volume at `/data`** so the SQLite DB survives redeploys. **No volume? No problem** — set `LOGGER_ID` and the bot auto-restores its DB from the pinned backup in that chat after every redeploy (see *💾 Auto DB backup & restore* below).
+- 🚂 **Railway** — auto-detects the `Dockerfile` (`railway.json` pins builder + start command). **Best:** add the **PostgreSQL** plugin (New → Database → PostgreSQL, link it to the service) — `DATABASE_URL` is injected automatically and the bot stores **everything there, surviving every redeploy** (no volume needed). **Free option:** set `LOGGER_ID` and the bot auto-restores its SQLite DB from the pinned backup in that chat after each redeploy (see *💾 Auto DB backup & restore* below).
 - 🎨 **Render** — one-click uses `render.yaml` (free instance, polling + health checks built in). Free instances **sleep after ~15 min without inbound traffic** — ping your service URL every 5 min with a free monitor (e.g. UptimeRobot) to stay awake. Free plan has no persistent disk (DB resets on restart); on a paid plan, enable the commented `disk` block in `render.yaml`.
 - 🌊 **Koyeb** — builds from the `Dockerfile`; add a volume mounted at `/data` if you want the DB to persist.
 - 🐳 **Any VPS with Docker** — see [manual setup](#-setup) below; one command with a named volume and you're live forever.
@@ -59,8 +60,8 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 - **Referral tracking with progress bar** — users always see progress toward their *next* card and get a milestone ping every time a new card unlocks.
 - **Atomic reward claims** — conditional writes inside a single transaction guarantee: one physical card per issue, never more cards than earned unlocks, nothing spent when the stock is empty.
 - **Privacy hardened** — users can only view their own info/progress (owner exempt).
-- **Zero external services** — embedded **SQLite** database, just a single `bot.db` file. No MongoDB, no hosted DB to configure.
-- **💾 Auto DB backup & restore** — survives redeploys even on ephemeral hosts (Railway without a volume, Render free, etc.):
+- **Zero external services OR managed PostgreSQL — your choice** — out of the box the bot runs on embedded **SQLite** (single `bot.db` file, nothing to configure). Set `DATABASE_URL` (Railway's PostgreSQL plugin injects it automatically) and the **same code transparently switches to PostgreSQL** — users, cards and settings live in the managed database and survive every redeploy. All queries are portable and placeholder-rebound; the atomic claim gates work identically on both engines.
+- **💾 Auto DB backup & restore** (SQLite mode) — survives redeploys even on ephemeral hosts (Railway without a volume, Render free, etc.):
   - every **30 minutes** (+ right after boot, + on demand with `/backupdb`) the bot checkpoints and uploads `bot.db` to the **`LOGGER_ID` chat** and keeps the **latest backup pinned**
   - on boot, if the local DB is missing (fresh container), the **newest pinned backup is downloaded and restored automatically** — users, cards, settings all come back
   - needs: `LOGGER_ID` set to a chat where the bot can post **and pin** (admin rights)

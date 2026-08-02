@@ -1017,6 +1017,12 @@ func backupCmd(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = msg.Reply(b, "❌ You are not authorized to use this command.", nil)
 		return nil
 	}
+	if UsingPostgres() {
+		_, _ = msg.Reply(b,
+			"🐘 <b>Running on PostgreSQL</b>\n\nYour data lives in the managed database and survives every redeploy automatically — Telegram-file backups are only used in the embedded SQLite mode.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
 	if backupChatID == 0 {
 		_, _ = msg.Reply(b,
 			"⚠️ <b>LOGGER_ID is not set.</b>\n\nBackups are uploaded to the LOGGER_ID chat. Set it in your environment variables, redeploy, then run /backupdb again.",
