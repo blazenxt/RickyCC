@@ -219,7 +219,7 @@ func TestButtonStyleNeverEmpty(t *testing.T) {
 		"admp.clearok", "admp.fsubclear", "admp.admindel.2", "admu.ban.3",
 		"admu.del.3", "admu.delok.3", "admu.reset.3", "admu.unban.3",
 		"admc.addcodes", "admc.fsubadd", "admc.adminadd", "admp.emojipremium",
-		"progress.", "admp.gibberish", "stockopen",
+		"progress.", "admp.gibberish", "stockopen", "admp.fsubtoggle",
 	}
 	valid := map[string]bool{"danger": true, "success": true, "primary": true}
 	for _, d := range data {

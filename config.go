@@ -21,6 +21,7 @@ var (
 	cfgMu        sync.RWMutex
 	logChatID    int64
 	fsubChannels []int64
+	fsubPaused   bool // force-join ON/OFF switch (channels kept while off)
 	adminIDs     []int64
 	supportURL   string
 	howtoText    string
@@ -50,11 +51,11 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	}
 
 	var fsubRaw, adminsRaw, support, howto, emojisRaw string
-	var target, paused int
+	var target, paused, fsubPausedFlag int
 	var logID int64
 	err = db.QueryRow(
-		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids FROM settings WHERE id = 1",
-	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw)
+		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids, fsub_paused FROM settings WHERE id = 1",
+	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw, &fsubPausedFlag)
 	if err != nil {
 		log.Printf("config: failed to read settings: %v", err)
 		return
@@ -69,6 +70,7 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	cfgMu.Lock()
 	logChatID = logID
 	fsubChannels = fsubs
+	fsubPaused = fsubPausedFlag != 0
 	adminIDs = admins
 	supportURL = support
 	howtoText = howto
@@ -80,8 +82,8 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	}
 	ClaimsPaused = paused != 0
 
-	log.Printf("config loaded: log=%d fsub=%v target=%d claimsPaused=%v admins=%v",
-		logID, fsubs, ReferralTarget, ClaimsPaused, admins)
+	log.Printf("config loaded: log=%d fsub=%v target=%d claimsPaused=%v fsubPaused=%v admins=%v",
+		logID, fsubs, ReferralTarget, ClaimsPaused, fsubPausedFlag != 0, admins)
 }
 
 // ---------- Getters / setters ----------
@@ -158,6 +160,29 @@ func removeFsubChannel(id int64) (bool, error) {
 
 func clearFsubChannels() error {
 	return saveFsubChannels([]int64{})
+}
+
+// getFsubPaused reports whether the force-join gate is switched OFF.
+func getFsubPaused() bool {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return fsubPaused
+}
+
+// setFsubPaused flips the force-join gate without touching the channel
+// list — pausing never deletes configured channels.
+func setFsubPaused(paused bool) error {
+	flag := 0
+	if paused {
+		flag = 1
+	}
+	if _, err := db.Exec(rebind("UPDATE settings SET fsub_paused = ? WHERE id = 1"), flag); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
+	}
+	cfgMu.Lock()
+	fsubPaused = paused
+	cfgMu.Unlock()
+	return nil
 }
 
 func setReferralTarget(n int) error {

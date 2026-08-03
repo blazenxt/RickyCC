@@ -165,6 +165,12 @@ func fsubSatisfied(status string, pendingRequest bool) bool {
 func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboardButton, error) {
 	channels := getFsubChannels()
 
+	// Force-join switched OFF from the admin panel → instant free pass,
+	// zero API calls. Covers /start AND taps on old "Try Again" locks.
+	if len(channels) == 0 || getFsubPaused() {
+		return nil, nil
+	}
+
 	type memberResult struct {
 		status string
 		err    error

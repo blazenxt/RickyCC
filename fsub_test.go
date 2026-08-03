@@ -98,3 +98,58 @@ func TestJoinButtonLabel(t *testing.T) {
 		t.Fatalf("label too long: %d runes", n)
 	}
 }
+
+// Force-join ON/OFF: paused means an instant free pass for /start AND old
+// lock-message "Try Again" taps — without touching any Telegram API (nil
+// bot proves zero calls happen), and the channel list stays intact.
+func TestFsubPausedGate(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil) // seeds the settings row
+
+	if err := saveFsubChannels([]int64{-1003653661162}); err != nil {
+		t.Fatalf("saveFsubChannels: %v", err)
+	}
+	if getFsubPaused() {
+		t.Fatal("gate should start enabled by default")
+	}
+
+	if err := setFsubPaused(true); err != nil {
+		t.Fatalf("setFsubPaused: %v", err)
+	}
+	buttons, err := fsubMissingButtons(nil, 4242) // nil bot = zero API proof
+	if err != nil || len(buttons) != 0 {
+		t.Fatalf("paused gate should bypass all checks: buttons=%v err=%v", buttons, err)
+	}
+	if got := getFsubChannels(); len(got) != 1 {
+		t.Fatalf("channels must survive pausing: %v", got)
+	}
+
+	if err := setFsubPaused(false); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if getFsubPaused() {
+		t.Fatal("gate should be enabled again after resume")
+	}
+}
+
+// The toggle persists across config reloads (database round-trip).
+func TestFsubPausedPersists(t *testing.T) {
+	setupTestDB(t)
+	loadConfig(0, nil)
+
+	if err := setFsubPaused(true); err != nil {
+		t.Fatalf("setFsubPaused: %v", err)
+	}
+	loadConfig(0, nil) // simulate a restart re-read
+	if !getFsubPaused() {
+		t.Fatal("paused state must survive a config reload")
+	}
+
+	if err := setFsubPaused(false); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	loadConfig(0, nil)
+	if getFsubPaused() {
+		t.Fatal("resumed state must survive a config reload")
+	}
+}

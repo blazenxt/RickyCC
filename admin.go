@@ -145,12 +145,19 @@ func admFsubView(b *gotgbot.Bot) (string, gotgbot.InlineKeyboardMarkup) {
 	chans := getFsubChannels()
 	titles := fetchChannelTitles(b, chans) // parallel; cached after first render
 
+	paused := getFsubPaused()
+
 	var sb strings.Builder
 	sb.WriteString("📢 <b>Force-Join Setup</b>\n\n")
+	if paused {
+		sb.WriteString("🔴 Status: <b>OFF</b> — gate paused, anyone can use the bot.\n\n")
+	} else {
+		sb.WriteString("🟢 Status: <b>ON</b> — users must join all channels.\n\n")
+	}
 	if len(chans) == 0 {
 		sb.WriteString("<i>No channels set — anyone can use the bot without joining.</i>\n")
 	} else {
-		sb.WriteString("Users must join <b>ALL</b> of these:\n\n")
+		sb.WriteString("Configured channels (kept even while OFF):\n\n")
 		for i, c := range chans {
 			if t := titles[c]; t != "" {
 				fmt.Fprintf(&sb, "%d. <b>%s</b>\n    <code>%d</code>\n", i+1, esc(t), c)
@@ -162,6 +169,11 @@ func admFsubView(b *gotgbot.Bot) (string, gotgbot.InlineKeyboardMarkup) {
 	sb.WriteString("\n<i>The bot must be admin in each channel (invite permission).</i>")
 
 	rows := [][]gotgbot.InlineKeyboardButton{}
+	toggle := admBtn("⏸️ Pause Force-Join", "admp.fsubtoggle")
+	if paused {
+		toggle = admBtn("▶️ Resume Force-Join", "admp.fsubtoggle")
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{toggle})
 	for _, c := range chans {
 		label := fmt.Sprintf("❌ Remove %d", c)
 		if t := titles[c]; t != "" {
@@ -322,6 +334,22 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("admin toggled claims: paused=%v", newState)
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: label, ShowAlert: newState})
 		text, kb := admSettingsView()
+		admEdit(b, msg, text, kb)
+
+	case "fsubtoggle":
+		newState := !getFsubPaused()
+		if err := setFsubPaused(newState); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		label := "▶️ Force-Join ON — users must join all channels."
+		if newState {
+			label = "⏸️ Force-Join OFF — anyone can use the bot now (channels kept)."
+		}
+		log.Printf("admin toggled force-join: paused=%v", newState)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: label, ShowAlert: newState})
+		text, kb := admFsubView(b)
 		admEdit(b, msg, text, kb)
 
 	case "emojipremium":
