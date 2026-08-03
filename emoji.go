@@ -110,6 +110,7 @@ var premiumEmojiDefaults = map[string]string{
 	// Third wave — owner-supplied IDs (add-cards summary + db-restore note).
 	"skip":  "5321335209818339164", // ⏭️
 	"cycle": "5377584064326804458", // ♻️
+	"cart":  "5226656353744862682", // 🛒
 }
 
 var iconDefaults = map[string]string{
@@ -184,10 +185,11 @@ var iconDefaults = map[string]string{
 	"num3":         "3️⃣",
 	"num4":         "4️⃣",
 
-	// Third wave — owner-supplied IDs for the add-cards summary (⏭️ skipped)
-	// and the database-restore notice (♻️).
+	// Third wave — owner-supplied IDs for the add-cards summary (⏭️ skipped),
+	// the database-restore notice (♻️) and the stock announcement (🛒).
 	"skip":  "⏭️",
 	"cycle": "♻️",
+	"cart":  "🛒",
 }
 
 var tgEmojiTagRe = regexp.MustCompile(`<tg-emoji emoji-id="\d+">.*?</tg-emoji>`)

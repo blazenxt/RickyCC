@@ -239,11 +239,11 @@ func TestSecondWaveDefaultsPresentInSource(t *testing.T) {
 		"adminlock", "find", "trash", "gear", "crown", "diamond", "home",
 		"new", "receipt", "bolt", "rocket", "info", "sad", "pointup",
 		"smalldiamond", "greendot", "num1", "num2", "num3", "num4",
-		"skip", "cycle",
+		"skip", "cycle", "cart",
 	}
 
 	var src strings.Builder
-	for _, f := range []string{"main.go", "admin.go", "fsub.go", "captcha.go", "config.go", "dbbackup.go", "utils.go"} {
+	for _, f := range []string{"main.go", "admin.go", "fsub.go", "captcha.go", "config.go", "dbbackup.go", "utils.go", "stocknotify.go"} {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
