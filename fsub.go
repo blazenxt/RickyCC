@@ -79,7 +79,7 @@ func alertBrokenFsubChannel(b *gotgbot.Bot, chatID int64, cause error) {
 	}
 	log.Printf("⚠️ force-join channel %d (%s) unverifiable: %s — gate skips it until fixed", chatID, name, reason)
 	notifyLogChat(b, fmt.Sprintf(
-		"⚠️ <b>Force-join channel broken</b>\n\n%s <b>%s</b> · <code>%d</code>\nCause: <code>%s</code>\n\n<i>Users is channel ko skip kar rahe hain — block NAHI ho rahe. Fix: bot ko wahan dobara admin banao (invite rights ke saath), ya /admin → Force-Join se hatao.</i>",
+		"⚠️ <b>Force-join channel broken</b>\n\n%s <b>%s</b> · <code>%d</code>\nCause: <code>%s</code>\n\n<i>Users are SKIPPING this channel — they are not being blocked. Fix: add the bot back as an admin there (with invite rights), or remove the channel via /admin → Force-Join.</i>",
 		icon("warn"), esc(name), chatID, esc(reason)))
 }
 

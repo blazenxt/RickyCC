@@ -172,7 +172,7 @@ func userbotCommand(b *gotgbot.Bot, ctx *ext.Context) error {
 	// Phone numbers, OTPs and 2FA passwords must NEVER travel through a
 	// group chat — the whole login flow is DM-only.
 	if ctx.EffectiveChat == nil || ctx.EffectiveChat.Type != "private" {
-		_, _ = msg.Reply(b, "🔐 Ye login sirf <b>DM</b> me hota hai — group me phone/OTP kabhi share mat karo. Mujhe private chat me /userbot bhejo.",
+		_, _ = msg.Reply(b, "🔐 This login only works in <b>DM</b> — never share your phone/OTP in a group. Send me /userbot in a private chat.",
 			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
@@ -263,15 +263,15 @@ func userbotInputMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 			_, _ = msg.Reply(b, "❌ Couldn't start the login client: "+esc(err.Error()), nil)
 			return handlers.EndConversation()
 		}
-		_, _ = msg.Reply(b, "📨 Login client start ho gaya — Telegram se contact ho raha hai. Code aate hi yahan bhej dena.", nil)
+		_, _ = msg.Reply(b, "📨 Login client started — contacting Telegram. Send the code here as soon as it arrives.", nil)
 		return nil
 	}
 
 	if !m.provide(text) {
-		_, _ = msg.Reply(b, "⚠️ Ek second… bot ready nahin hua. Dubara bhejo, ya /cancel.", nil)
+		_, _ = msg.Reply(b, "⚠️ One moment… the login client isn't ready yet. Send it again, or /cancel.", nil)
 		return nil
 	}
-	_, _ = msg.Reply(b, "⏳ Check ho raha hai…", nil)
+	_, _ = msg.Reply(b, "⏳ Checking…", nil)
 	return nil
 }
 
@@ -376,7 +376,7 @@ func (m *ubManager) run(phone string, interactive bool) {
 				return err // owner pressed /cancel — stay quiet
 			}
 			if interactive {
-				m.dm("❌ <b>Login failed</b>: " + esc(err.Error()) + "\n\n/userbot se dobara try karo.")
+				m.dm("❌ <b>Login failed</b>: " + esc(err.Error()) + "\n\nStart over with /userbot.")
 			} else {
 				log.Printf("🤖 userbot: stored session no longer valid (%v) — /userbot to re-login", err)
 			}
@@ -399,7 +399,7 @@ func (m *ubManager) run(phone string, interactive bool) {
 
 		if interactive {
 			m.dm(premiumize(fmt.Sprintf(
-				"✅ <b>Editor ON!</b>\n\nLogged in as <b>%s</b>.\n\nAb jab bhi bot channels pe announcement post karega, ye account usse 1-2 second me premium emojis ke saath edit kar dega. Bot DM/group flow bilkul same rahega.\n\n<i>Login complete — /cancel daba do conversation band karne ke liye.</i>",
+				"✅ <b>Editor ON!</b>\n\nLogged in as <b>%s</b>.\n\nFrom now on, every announcement the bot posts to your channels gets edited by this account within 1-2 seconds — real premium emojis. The bot DM/group flow stays exactly the same.\n\n<i>Login complete — press /cancel to close this conversation.</i>",
 				esc(name))))
 		} else {
 			m.dm(premiumize(
@@ -465,7 +465,7 @@ func (m *ubManager) authenticate(ctx context.Context, client *telegram.Client, p
 		return errors.New("unexpected sent-code type (already authorized?)")
 	}
 
-	m.dm("📨 <b>Login code bheja gaya</b> us account ke Telegram app pe.\n\nCode yahan bhejo (jaise dikha waise hi — e.g. <code>12345</code>).")
+	m.dm("📨 <b>Login code sent</b> to that account's Telegram app.\n\nSend the code here exactly as shown (e.g. <code>12345</code>).")
 
 	for attempt := 0; attempt < 3; attempt++ {
 		code, err := m.waitInput(ctx)
@@ -480,7 +480,7 @@ func (m *ubManager) authenticate(ctx context.Context, client *telegram.Client, p
 		case errors.Is(signErr, tgauth.ErrPasswordAuthNeeded):
 			return m.authenticatePassword(ctx, client)
 		case attempt < 2:
-			m.dm("❌ Code galat lag raha hai. Telegram app me naya code dekho aur <b>dobara bhejo</b>.")
+			m.dm("❌ That code looks wrong. Check the latest code in the Telegram app and <b>send it again</b>.")
 		default:
 			return fmt.Errorf("sign in: %w", signErr)
 		}
@@ -493,7 +493,7 @@ func (m *ubManager) authenticatePassword(ctx context.Context, client *telegram.C
 	m.mu.Lock()
 	m.phase = ubPhasePass
 	m.mu.Unlock()
-	m.dm("🔐 <b>2FA on hai</b> — apna cloud password bhejo.\n\n<i>(Password sirf login ke liye use hota hai; store nahi hota.)</i>")
+	m.dm("🔐 <b>Two-step verification is on</b> — send your cloud password.\n\n<i>(The password is only used for this login; it is never stored.)</i>")
 	for attempt := 0; attempt < 3; attempt++ {
 		pass, err := m.waitInput(ctx)
 		if err != nil {
@@ -502,7 +502,7 @@ func (m *ubManager) authenticatePassword(ctx context.Context, client *telegram.C
 		if _, err := client.Auth().Password(ctx, pass); err == nil {
 			return nil
 		} else if attempt < 2 {
-			m.dm("❌ Password galat lag raha hai. <b>Dobara bhejo</b>.")
+			m.dm("❌ That password looks wrong. <b>Send it again</b>.")
 		} else {
 			return fmt.Errorf("password: %w", err)
 		}
@@ -775,7 +775,7 @@ func userbotCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("userbot logged out by owner")
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔌 Logged out — session wiped."})
 		_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(
-			"🤖 <b>Premium Channel Editor</b>\n\n"+ubMgr.statusLine()+"\n\n/userbot se dobara login karo jab chahiye."),
+			"🤖 <b>Premium Channel Editor</b>\n\n"+ubMgr.statusLine()+"\n\nRun /userbot again whenever you want to log back in."),
 			&gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 	case "status":
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔄 Refreshed"})
