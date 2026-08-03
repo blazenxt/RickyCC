@@ -433,6 +433,7 @@ func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
 	// 2) Positive CTAs — claiming, verifying, unbanning, CREATING things.
 	if d == "claim" || d == "fsj" || strings.HasPrefix(d, "fsj.") ||
 		strings.HasPrefix(d, "admu.unban.") ||
+		d == "stockopen" || // stock announcement "Open Bot"
 		d == "admc.addcodes" || d == "admc.fsubadd" || d == "admc.adminadd" ||
 		d == "admp.emojipremium" {
 		return "success"

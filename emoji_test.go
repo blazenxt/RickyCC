@@ -131,6 +131,7 @@ func TestApplyButtonStyles(t *testing.T) {
 		{gotgbot.InlineKeyboardButton{Text: "✅ Joined — Try Again", CallbackData: "fsj.123"}, "success"},
 		{gotgbot.InlineKeyboardButton{Text: "✅ Joined — Try Again", CallbackData: "fsj"}, "success"},
 		{gotgbot.InlineKeyboardButton{Text: "✅ Unban", CallbackData: "admu.unban.9"}, "success"},
+		{gotgbot.InlineKeyboardButton{Text: "🚀 Open Bot", CallbackData: "stockopen"}, "success"},
 		{gotgbot.InlineKeyboardButton{Text: "✅ Yes, delete them", CallbackData: "admp.clearok"}, "danger"}, // ✅ glyph, still red
 		{gotgbot.InlineKeyboardButton{Text: "🗑️ Delete User", CallbackData: "admu.del.9"}, "danger"},
 		{gotgbot.InlineKeyboardButton{Text: "✅ Yes, delete", CallbackData: "admu.delok.9"}, "danger"},
@@ -218,7 +219,7 @@ func TestButtonStyleNeverEmpty(t *testing.T) {
 		"admp.clearok", "admp.fsubclear", "admp.admindel.2", "admu.ban.3",
 		"admu.del.3", "admu.delok.3", "admu.reset.3", "admu.unban.3",
 		"admc.addcodes", "admc.fsubadd", "admc.adminadd", "admp.emojipremium",
-		"progress.", "admp.gibberish",
+		"progress.", "admp.gibberish", "stockopen",
 	}
 	valid := map[string]bool{"danger": true, "success": true, "primary": true}
 	for _, d := range data {

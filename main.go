@@ -146,6 +146,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("home"), home))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cap."), captchaCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("fsj"), fsubRetryCallback))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("stockopen"), stockOpenCallback))
 
 	// Admin-approval force-join: record pending join requests so the gate
 	// can count them as satisfied.
@@ -981,6 +982,9 @@ func addCard(b *gotgbot.Bot, ctx *ext.Context) error {
 		"✅ <b>Added %d card(s).</b>\n⏭️ Skipped (duplicates/empty): %d\n📦 <b>Stock available:</b> %d",
 		added, skipped, total)),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	if added > 0 {
+		go broadcastStockUpdate(b, added, total, user.FirstName)
+	}
 	return nil
 }
 

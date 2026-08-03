@@ -872,6 +872,9 @@ func adminAddCardsMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 				},
 			}),
 		})
+	if added > 0 {
+		go broadcastStockUpdate(b, added, total, msg.From.FirstName)
+	}
 	return handlers.EndConversation()
 }
 
