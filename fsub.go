@@ -121,6 +121,17 @@ func cacheInviteLink(chatID int64, link string) {
 	chatCacheMutex.Unlock()
 }
 
+// cacheChatTitle stores a chat's display title in the local cache (used when
+// a flow already fetched the chat, saving a lookup later).
+func cacheChatTitle(chatID int64, title string) {
+	if title == "" {
+		return
+	}
+	chatCacheMutex.Lock()
+	chatTitles[chatID] = title
+	chatCacheMutex.Unlock()
+}
+
 // fsubRetryData packs the (optional) /start referral argument into the
 // callback payload of the "Joined — Try Again" button. callback_data is
 // limited to 64 bytes, so over-long junk args are truncated — referrals are

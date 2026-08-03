@@ -223,3 +223,20 @@ func TestAdmFsubViewNilBot(t *testing.T) {
 		}
 	}
 }
+
+// The alerts view must render safely with a nil bot (first boot / tests):
+// header, relay status and no empty keyboard rows.
+func TestAdmAlertsViewNilBot(t *testing.T) {
+	text, kb := admAlertsView(nil)
+	if !strings.Contains(text, "Stock Alerts") {
+		t.Fatalf("header missing: %q", text)
+	}
+	if !strings.Contains(text, "force-join channels") {
+		t.Fatalf("relay status missing: %q", text)
+	}
+	for _, row := range kb.InlineKeyboard {
+		if len(row) == 0 {
+			t.Fatal("empty keyboard row")
+		}
+	}
+}

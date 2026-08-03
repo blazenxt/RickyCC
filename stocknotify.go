@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"time"
 
@@ -51,50 +52,86 @@ func stockNotifyKeyboard() gotgbot.InlineKeyboardMarkup {
 	return *decorateButtons(&kb)
 }
 
-// broadcastStockUpdate announces a fresh batch to every registered user,
-// paced like the manual broadcast (~29 msg/s). Call it in a goroutine so
-// the admin's add-cards flow never blocks on N network round-trips.
+// stockNotifyTargets builds the channel/group destination set for an
+// announcement: every configured announce channel plus — when the relay
+// toggle is on — every force-join channel (deduped, sorted for stable logs).
+func stockNotifyTargets(announce, fsub []int64, fsubRelay bool) []int64 {
+	set := map[int64]struct{}{}
+	for _, id := range announce {
+		set[id] = struct{}{}
+	}
+	if fsubRelay {
+		for _, id := range fsub {
+			set[id] = struct{}{}
+		}
+	}
+	out := make([]int64, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// broadcastStockUpdate announces a fresh batch to every registered user AND
+// every configured announce channel (+ force-join channels when the relay
+// toggle is on), paced like the manual broadcast (~29 msg/s). Call it in a
+// goroutine so the admin's add-cards flow never blocks on N round-trips.
 func broadcastStockUpdate(b *gotgbot.Bot, added int, total int64, adminName string) {
 	users, err := getAllUsers()
 	if err != nil {
 		log.Printf("stock notify: failed to list users: %v", err)
 		return
 	}
-	if len(users) == 0 {
-		return
-	}
 
 	text := premiumize(stockNotifyText(added, total, adminName))
 	kb := stockNotifyKeyboard()
 
-	sent, failed := 0, 0
-	for _, u := range users {
-		_, err := b.SendMessage(u.ID, text, &gotgbot.SendMessageOpts{
+	send := func(chatID int64) bool {
+		_, err := b.SendMessage(chatID, text, &gotgbot.SendMessageOpts{
 			ParseMode:          "HTML",
 			ReplyMarkup:        kb,
 			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true},
 		})
-		switch {
-		case err == nil:
+		if err == nil {
+			return true
+		}
+		// Safety net: if custom emoji ever rejects, deliver stripped.
+		_, err2 := b.SendMessage(chatID, stripTGEmoji(text), &gotgbot.SendMessageOpts{
+			ParseMode:   "HTML",
+			ReplyMarkup: kb,
+		})
+		return err2 == nil
+	}
+
+	sent, failed := 0, 0
+	for _, u := range users {
+		if send(u.ID) {
 			sent++
-		default:
-			// Safety net: if custom emoji ever rejects, deliver stripped.
-			if _, err2 := b.SendMessage(u.ID, stripTGEmoji(text), &gotgbot.SendMessageOpts{
-				ParseMode:   "HTML",
-				ReplyMarkup: kb,
-			}); err2 == nil {
-				sent++
-			} else {
-				failed++
-			}
+		} else {
+			failed++
 		}
 		time.Sleep(34 * time.Millisecond)
 	}
 
-	log.Printf("📢 stock update announced: %d sent, %d failed (added %d by %s)", sent, failed, added, adminName)
+	targets := stockNotifyTargets(getAnnounceChannels(), getFsubChannels(), getAnnounceFsub())
+	sentChats, failedChats := 0, 0
+	for _, id := range targets {
+		if send(id) {
+			sentChats++
+		} else {
+			failedChats++
+			log.Printf("stock notify: channel post failed for %d (bot admin there?)", id)
+		}
+		time.Sleep(34 * time.Millisecond)
+	}
+
+	log.Printf("📢 stock update announced: users %d sent/%d failed, channels %d sent/%d failed (added %d by %s)",
+		sent, failed, sentChats, failedChats, added, adminName)
 	notifyLogChat(b, fmt.Sprintf(
-		"%s <b>Stock update broadcast</b>\n\n%s Added: <b>%d</b>\n%s Total stock: <b>%d</b>\n%s By: %s\n%s Delivered: <b>%d</b> · failed %d",
-		icon("mega"), icon("box"), added, icon("stats"), total, icon("person"), esc(adminName), icon("ok"), sent, failed))
+		"%s <b>Stock update broadcast</b>\n\n%s Added: <b>%d</b>\n%s Total stock: <b>%d</b>\n%s By: %s\n%s Users: <b>%d</b> · failed %d\n%s Channels: <b>%d</b> · failed %d",
+		icon("mega"), icon("box"), added, icon("stats"), total, icon("person"), esc(adminName),
+		icon("ok"), sent, failed, icon("mega"), sentChats, failedChats))
 }
 
 // stockOpenCallback backs "🚀 Open Bot": answering the callback with a t.me

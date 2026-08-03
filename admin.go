@@ -14,15 +14,16 @@ import (
 
 // Conversation states for the admin panel
 const (
-	admStateFindUser = "ADM_FIND_USER"
-	admStateAddCards = "ADM_ADD_CODES"
-	admStateFsubAdd  = "ADM_FSUB_ADD"
-	admStateLogSet   = "ADM_LOG_SET"
-	admStateTarget   = "ADM_TARGET"
-	admStateAdminAdd = "ADM_ADMIN_ADD"
-	admStateSupport  = "ADM_SUPPORT"
-	admStateHowto    = "ADM_HOWTO"
-	admStateEmojis   = "ADM_EMOJIS"
+	admStateFindUser  = "ADM_FIND_USER"
+	admStateAddCards  = "ADM_ADD_CODES"
+	admStateFsubAdd   = "ADM_FSUB_ADD"
+	admStateLogSet    = "ADM_LOG_SET"
+	admStateTarget    = "ADM_TARGET"
+	admStateAdminAdd  = "ADM_ADMIN_ADD"
+	admStateSupport   = "ADM_SUPPORT"
+	admStateHowto     = "ADM_HOWTO"
+	admStateEmojis    = "ADM_EMOJIS"
+	admStateAlertsAdd = "ADM_ALERTS_ADD"
 )
 
 const admTimeFmt = "02 Jan 06 15:04"
@@ -62,6 +63,7 @@ func admPanelKeyboard() gotgbot.InlineKeyboardMarkup {
 			{admBtn("📊 Dashboard", "admp.dash")},
 			{admBtn("👥 Users", "admp.users"), admBtn("🎟️ Cards", "admp.codes")},
 			{admBtn("🛠 Settings", "admp.settings"), admBtn("📢 Broadcast", "admp.bcast")},
+			{admBtn("🔔 Stock Alerts", "admp.alerts")},
 			{admBtn("👑 Admins", "admp.admins"), admBtn("❌ Close", "admp.close")},
 		},
 	}
@@ -192,6 +194,60 @@ func admFsubView(b *gotgbot.Bot) (string, gotgbot.InlineKeyboardMarkup) {
 	return sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
+// admAlertsView renders the Stock Alerts section: which channels/groups
+// receive every stock announcement (besides all users), plus the relay
+// toggle that forwards announcements to ALL force-join channels.
+func admAlertsView(b *gotgbot.Bot) (string, gotgbot.InlineKeyboardMarkup) {
+	chans := getAnnounceChannels()
+	titles := fetchChannelTitles(b, chans) // parallel; cached after first render
+	relay := getAnnounceFsub()
+
+	var sb strings.Builder
+	sb.WriteString("🔔 <b>Stock Alerts</b>\n\n")
+	sb.WriteString("Whenever fresh stock is added, the <b>✅ Stock Updated!</b> announcement goes to all users — and also to these channels/groups:\n\n")
+	if len(chans) == 0 {
+		sb.WriteString("<i>No alert channels set — only users get the announcement.</i>\n")
+	} else {
+		for i, c := range chans {
+			if t := titles[c]; t != "" {
+				fmt.Fprintf(&sb, "%d. <b>%s</b>\n    <code>%d</code>\n", i+1, esc(t), c)
+			} else {
+				fmt.Fprintf(&sb, "%d. <code>%d</code>\n", i+1, c)
+			}
+		}
+	}
+
+	if relay {
+		sb.WriteString("\n📢 Send to ALL force-join channels: 🟢 <b>ON</b>")
+	} else {
+		sb.WriteString("\n📢 Send to ALL force-join channels: 🔴 <b>OFF</b>")
+	}
+	sb.WriteString("\n\n<i>The bot must be an <b>admin</b> in each channel so posts go through.</i>")
+
+	rows := [][]gotgbot.InlineKeyboardButton{}
+	toggle := admBtn("▶️ Enable Force-Join Relay", "admp.alertstoggle")
+	if relay {
+		toggle = admBtn("⏸️ Disable Force-Join Relay", "admp.alertstoggle")
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{toggle})
+	for _, c := range chans {
+		label := fmt.Sprintf("❌ Remove %d", c)
+		if t := titles[c]; t != "" {
+			label = "❌ Remove " + truncate(t, 24)
+		}
+		rows = append(rows, []gotgbot.InlineKeyboardButton{
+			admBtn(label, fmt.Sprintf("admp.alertsdel.%d", c)),
+		})
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("➕ Add Channel", "admc.alertsadd")})
+	if len(chans) > 0 {
+		rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("🧹 Clear All", "admp.alertsclear")})
+	}
+	rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("🔙 Panel", "admp.home")})
+
+	return sb.String(), gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
 func admAdminsView() (string, gotgbot.InlineKeyboardMarkup) {
 	ids := getAdminIDs()
 
@@ -285,6 +341,27 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	// Stock-alert channel removal carries an ID: admp.alertsdel.<id>
+	if idStr, ok := strings.CutPrefix(action, "alertsdel."); ok {
+		chatID := stringToInt64(idStr)
+		removed, err := removeAnnounceChannel(chatID)
+		if err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		if !removed {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "⚠️ Channel not in the list.", ShowAlert: true})
+			return nil
+		}
+		log.Printf("admin removed stock-alert channel %d", chatID)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "❌ Channel removed."})
+		text, kb := admAlertsView(b)
+		admEdit(b, msg, text, kb)
+		return nil
+	}
+
 	switch action {
 	case "admins":
 		if !isOwner(query.From.Id) {
@@ -350,6 +427,39 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("admin toggled force-join: paused=%v", newState)
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: label, ShowAlert: newState})
 		text, kb := admFsubView(b)
+		admEdit(b, msg, text, kb)
+
+	case "alerts":
+		_, _ = query.Answer(b, nil)
+		text, kb := admAlertsView(b)
+		admEdit(b, msg, text, kb)
+
+	case "alertstoggle":
+		newState := !getAnnounceFsub()
+		if err := setAnnounceFsub(newState); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		label := "▶️ Relay ON — announcements now go to ALL force-join channels too."
+		if !newState {
+			label = "⏸️ Relay OFF — announcements go only to users + alert channels."
+		}
+		log.Printf("admin toggled stock-alert force-join relay: on=%v", newState)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: label, ShowAlert: true})
+		text, kb := admAlertsView(b)
+		admEdit(b, msg, text, kb)
+
+	case "alertsclear":
+		if err := clearAnnounceChannels(); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		log.Printf("admin cleared all stock-alert channels")
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "🧹 Cleared — announcements now go only to users.", ShowAlert: true})
+		text, kb := admAlertsView(b)
 		admEdit(b, msg, text, kb)
 
 	case "emojipremium":
@@ -960,6 +1070,8 @@ func adminConversationBack(b *gotgbot.Bot, ctx *ext.Context) error {
 		text, kb = admCodesView()
 	case "fsub":
 		text, kb = admFsubView(b)
+	case "alerts":
+		text, kb = admAlertsView(b)
 	case "admins":
 		text, kb = admAdminsView()
 	default: // "settings" and anything unknown land on the settings hub
@@ -1095,6 +1207,83 @@ func adminFsubAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 		"✅ <b>Channel added to force-join!</b>\n\n📢 %s\n🆔 <code>%d</code>\n%s",
 		esc(chat.Title), chatID, linkStatus),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML", ReplyMarkup: admSettingsBackBtn()})
+	return handlers.EndConversation()
+}
+
+// adminAlertsAddStart asks the admin for a stock-alert channel/group ID.
+func adminAlertsAddStart(b *gotgbot.Bot, ctx *ext.Context) error {
+	query := ctx.CallbackQuery
+	if !isAdmin(query.From.Id) {
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "❌ Owner only.", ShowAlert: true})
+		return handlers.EndConversation()
+	}
+
+	_, _ = query.Answer(b, nil)
+	_, _, _ = ctx.EffectiveMessage.EditText(b, premiumize(
+		"🔔 <b>Add Stock-Alert Channel</b>\n\n"+
+			"Send the channel/group ID (e.g. <code>-1001234567890</code>). Every stock announcement will be posted there.\n\n"+
+			"<i>The bot must be an <b>admin</b> in the channel (post permission), otherwise nothing will reach it.</i>"),
+		&gotgbot.EditMessageTextOpts{ParseMode: "HTML", ReplyMarkup: admConvBackBtn("alerts")})
+	return handlers.NextConversationState(admStateAlertsAdd)
+}
+
+func adminAlertsAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if msg.From == nil || !isAdmin(msg.From.Id) {
+		return handlers.EndConversation()
+	}
+
+	chatID := stringToInt64(strings.TrimSpace(msg.GetText()))
+	if chatID >= 0 {
+		_, _ = msg.Reply(b, "❌ Invalid channel/group ID. They have negative IDs like <code>-1001234567890</code>.\n\nTry again, or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	chat, err := b.GetChat(chatID, nil)
+	if err != nil {
+		_, _ = msg.Reply(b,
+			"❌ I can't access that chat. Make me an <b>admin</b> there first, then send the ID again — or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	// Posting into a channel requires admin rights; a plain member is fine
+	// for groups only.
+	member, _ := b.GetChatMember(chatID, b.User.Id, nil)
+	status := ""
+	if member != nil {
+		status = member.MergeChatMember().Status
+	}
+	if status != "administrator" && status != "creator" &&
+		!(chat.Type != "channel" && status == "member") {
+		_, _ = msg.Reply(b,
+			"❌ I'm in that chat but can't <b>post</b> there. Make me an <b>admin</b>, then send the ID again — or /cancel.",
+			&gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	added, err := addAnnounceChannel(chatID)
+	if err != nil {
+		_, _ = msg.Reply(b, "❌ Failed to save: "+CustomError(err).Error(), nil)
+		return handlers.EndConversation()
+	}
+	if !added {
+		_, _ = msg.Reply(b, "⚠️ That chat is already in the alerts list.", nil)
+		return handlers.EndConversation()
+	}
+
+	// Warm the title cache so the alerts view shows the name instantly.
+	if chat.Title != "" {
+		cacheChatTitle(chatID, chat.Title)
+	}
+
+	log.Printf("admin added stock-alert channel %d (%s)", chatID, chat.Title)
+	_, _ = msg.Reply(b, fmt.Sprintf(
+		"✅ <b>Stock-alert channel added!</b>\n\n🔔 %s\n🆔 <code>%d</code>\n\nNext stock update will be posted here too.",
+		esc(chat.Title), chatID),
+		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return handlers.EndConversation()
 }
 

@@ -143,7 +143,9 @@ CREATE TABLE IF NOT EXISTS settings (
     admin_ids       TEXT    NOT NULL DEFAULT '[]',
     support_url     TEXT    NOT NULL DEFAULT '',
     howto_text      TEXT    NOT NULL DEFAULT '',
-    emoji_ids       TEXT    NOT NULL DEFAULT '{}'
+    emoji_ids       TEXT    NOT NULL DEFAULT '{}',
+    announce_channels TEXT  NOT NULL DEFAULT '[]',
+    announce_fsub   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS join_requests (
     channel_id   INTEGER NOT NULL,
@@ -187,7 +189,9 @@ CREATE TABLE IF NOT EXISTS settings (
     admin_ids       TEXT    NOT NULL DEFAULT '[]',
     support_url     TEXT    NOT NULL DEFAULT '',
     howto_text      TEXT    NOT NULL DEFAULT '',
-    emoji_ids       TEXT    NOT NULL DEFAULT '{}'
+    emoji_ids       TEXT    NOT NULL DEFAULT '{}',
+    announce_channels TEXT  NOT NULL DEFAULT '[]',
+    announce_fsub   INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS join_requests (
     channel_id   BIGINT NOT NULL,
@@ -205,6 +209,8 @@ var settingsMigrations = []string{
 	`ALTER TABLE settings ADD COLUMN howto_text TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE settings ADD COLUMN emoji_ids TEXT NOT NULL DEFAULT '{}'`,
 	`ALTER TABLE settings ADD COLUMN fsub_paused INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE settings ADD COLUMN announce_channels TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE settings ADD COLUMN announce_fsub INTEGER NOT NULL DEFAULT 0`,
 }
 
 var settingsMigrationsPG = []string{
@@ -212,6 +218,8 @@ var settingsMigrationsPG = []string{
 	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS howto_text TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS emoji_ids TEXT NOT NULL DEFAULT '{}'`,
 	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS fsub_paused INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS announce_channels TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS announce_fsub INTEGER NOT NULL DEFAULT 0`,
 }
 
 // userMigrations brings older user tables to the repeat-reward model:

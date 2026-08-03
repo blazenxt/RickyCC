@@ -18,14 +18,16 @@ var (
 	// ClaimsPaused blocks reward claims while an admin restocks, etc.
 	ClaimsPaused = false
 
-	cfgMu        sync.RWMutex
-	logChatID    int64
-	fsubChannels []int64
-	fsubPaused   bool // force-join ON/OFF switch (channels kept while off)
-	adminIDs     []int64
-	supportURL   string
-	howtoText    string
-	customIcons  map[string]string // icon slot -> custom emoji id (see emoji.go)
+	cfgMu         sync.RWMutex
+	logChatID     int64
+	fsubChannels  []int64
+	fsubPaused    bool    // force-join ON/OFF switch (channels kept while off)
+	announceChans []int64 // stock-alert destination channels/groups
+	announceFsub  bool    // relay announcements to ALL force-join channels
+	adminIDs      []int64
+	supportURL    string
+	howtoText     string
+	customIcons   map[string]string // icon slot -> custom emoji id (see emoji.go)
 )
 
 // defaultHowto is shown under delivered cards until an admin sets custom text.
@@ -50,12 +52,12 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 		log.Printf("config: failed to seed settings: %v", err)
 	}
 
-	var fsubRaw, adminsRaw, support, howto, emojisRaw string
-	var target, paused, fsubPausedFlag int
+	var fsubRaw, adminsRaw, support, howto, emojisRaw, announceRaw string
+	var target, paused, fsubPausedFlag, announceFsubFlag int
 	var logID int64
 	err = db.QueryRow(
-		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids, fsub_paused FROM settings WHERE id = 1",
-	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw, &fsubPausedFlag)
+		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids, fsub_paused, announce_channels, announce_fsub FROM settings WHERE id = 1",
+	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw, &fsubPausedFlag, &announceRaw, &announceFsubFlag)
 	if err != nil {
 		log.Printf("config: failed to read settings: %v", err)
 		return
@@ -64,6 +66,8 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	var fsubs, admins []int64
 	_ = json.Unmarshal([]byte(fsubRaw), &fsubs)
 	_ = json.Unmarshal([]byte(adminsRaw), &admins)
+	var announce []int64
+	_ = json.Unmarshal([]byte(announceRaw), &announce)
 	var icons map[string]string
 	_ = json.Unmarshal([]byte(emojisRaw), &icons)
 
@@ -71,6 +75,8 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	logChatID = logID
 	fsubChannels = fsubs
 	fsubPaused = fsubPausedFlag != 0
+	announceChans = announce
+	announceFsub = announceFsubFlag != 0
 	adminIDs = admins
 	supportURL = support
 	howtoText = howto
@@ -160,6 +166,88 @@ func removeFsubChannel(id int64) (bool, error) {
 
 func clearFsubChannels() error {
 	return saveFsubChannels([]int64{})
+}
+
+// ---------- Stock-alert announcement destinations ----------
+
+func getAnnounceChannels() []int64 {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return append([]int64(nil), announceChans...)
+}
+
+func saveAnnounceChannels(next []int64) error {
+	data, _ := json.Marshal(next)
+	if _, err := db.Exec(rebind("UPDATE settings SET announce_channels = ? WHERE id = 1"), string(data)); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
+	}
+	cfgMu.Lock()
+	announceChans = append([]int64(nil), next...)
+	cfgMu.Unlock()
+	return nil
+}
+
+// addAnnounceChannel appends a stock-alert destination.
+// Returns false if it was already present.
+func addAnnounceChannel(id int64) (bool, error) {
+	cur := getAnnounceChannels()
+	for _, c := range cur {
+		if c == id {
+			return false, nil
+		}
+	}
+	if err := saveAnnounceChannels(append(cur, id)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// removeAnnounceChannel drops a stock-alert destination.
+// Returns false if it wasn't present.
+func removeAnnounceChannel(id int64) (bool, error) {
+	cur := getAnnounceChannels()
+	next := make([]int64, 0, len(cur))
+	found := false
+	for _, c := range cur {
+		if c == id {
+			found = true
+			continue
+		}
+		next = append(next, c)
+	}
+	if !found {
+		return false, nil
+	}
+	if err := saveAnnounceChannels(next); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func clearAnnounceChannels() error {
+	return saveAnnounceChannels([]int64{})
+}
+
+// getAnnounceFsub reports whether announcements also relay to every
+// force-join channel.
+func getAnnounceFsub() bool {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return announceFsub
+}
+
+func setAnnounceFsub(on bool) error {
+	flag := 0
+	if on {
+		flag = 1
+	}
+	if _, err := db.Exec(rebind("UPDATE settings SET announce_fsub = ? WHERE id = 1"), flag); err != nil {
+		return fmt.Errorf("failed to save settings: %v", err)
+	}
+	cfgMu.Lock()
+	announceFsub = on
+	cfgMu.Unlock()
+	return nil
 }
 
 // getFsubPaused reports whether the force-join gate is switched OFF.

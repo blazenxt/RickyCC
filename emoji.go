@@ -190,6 +190,9 @@ var iconDefaults = map[string]string{
 	"skip":  "⏭️",
 	"cycle": "♻️",
 	"cart":  "🛒",
+
+	// Fourth wave — slot ready, premium ID pending from the owner.
+	"bell": "🔔",
 }
 
 var tgEmojiTagRe = regexp.MustCompile(`<tg-emoji emoji-id="\d+">.*?</tg-emoji>`)
@@ -437,6 +440,7 @@ func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
 		strings.HasPrefix(d, "admu.unban.") ||
 		d == "stockopen" || // stock announcement "Open Bot"
 		d == "admc.addcodes" || d == "admc.fsubadd" || d == "admc.adminadd" ||
+		d == "admc.alertsadd" ||
 		d == "admp.emojipremium" {
 		return "success"
 	}
