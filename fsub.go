@@ -12,6 +12,7 @@ import (
 
 var (
 	chatInviteLinks = make(map[int64]string)
+	chatTitles      = make(map[int64]string)
 	chatCacheMutex  sync.RWMutex
 	memberStatuses  = map[string]bool{
 		"member":        true,
@@ -52,8 +53,65 @@ func fetchInviteLink(b *gotgbot.Bot, chatID int64) (string, error) {
 		return "", err
 	}
 
+	// One GetChat feeds BOTH caches — invite link and display title.
 	chatInviteLinks[chatID] = chat.InviteLink
+	if chat.Title != "" {
+		chatTitles[chatID] = chat.Title
+	}
 	return chat.InviteLink, nil
+}
+
+// cachedChannelTitle returns the memoized display title ("" when unknown).
+func cachedChannelTitle(chatID int64) string {
+	chatCacheMutex.RLock()
+	defer chatCacheMutex.RUnlock()
+	return chatTitles[chatID]
+}
+
+// fetchChannelTitle resolves a chat's display title, cached process-wide;
+// "" when the chat can't be read (bot not admin / wrong id).
+func fetchChannelTitle(b *gotgbot.Bot, chatID int64) string {
+	if t := cachedChannelTitle(chatID); t != "" {
+		return t
+	}
+	if b == nil {
+		return ""
+	}
+	// fetchInviteLink's GetChat fill both caches on success.
+	if _, err := fetchInviteLink(b, chatID); err != nil {
+		return ""
+	}
+	return cachedChannelTitle(chatID)
+}
+
+// fetchChannelTitles resolves display titles for many chats at once —
+// concurrently, so a 6-channel admin panel render costs ONE round-trip.
+func fetchChannelTitles(b *gotgbot.Bot, ids []int64) map[int64]string {
+	out := make(map[int64]string, len(ids))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			if t := fetchChannelTitle(b, id); t != "" {
+				mu.Lock()
+				out[id] = t
+				mu.Unlock()
+			}
+		}(id)
+	}
+	wg.Wait()
+	return out
+}
+
+// joinButtonLabel prefers the channel's real name ("📢 My Channel") and
+// falls back to the numbered generic label when unresolved.
+func joinButtonLabel(index int, title string) string {
+	if title != "" {
+		return "📢 " + truncate(title, 40)
+	}
+	return fmt.Sprintf("📢 Join Channel %d", index+1)
 }
 
 // cacheInviteLink stores an invite link for a chat in the local cache.
@@ -172,8 +230,10 @@ func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboar
 		if linkErrs[i] != nil || links[i] == "" {
 			return nil, fmt.Errorf("invite link not available for chat %d", chatID)
 		}
+		// The parallel link fetch above already filled the title cache —
+		// zero extra API calls for the names.
 		buttons = append(buttons, []gotgbot.InlineKeyboardButton{
-			{Text: fmt.Sprintf("📢 Join Channel %d", i+1), Url: links[i]},
+			{Text: joinButtonLabel(i, cachedChannelTitle(chatID)), Url: links[i]},
 		})
 	}
 	return buttons, nil

@@ -141,8 +141,9 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 	return text, kb
 }
 
-func admFsubView() (string, gotgbot.InlineKeyboardMarkup) {
+func admFsubView(b *gotgbot.Bot) (string, gotgbot.InlineKeyboardMarkup) {
 	chans := getFsubChannels()
+	titles := fetchChannelTitles(b, chans) // parallel; cached after first render
 
 	var sb strings.Builder
 	sb.WriteString("📢 <b>Force-Join Setup</b>\n\n")
@@ -151,15 +152,23 @@ func admFsubView() (string, gotgbot.InlineKeyboardMarkup) {
 	} else {
 		sb.WriteString("Users must join <b>ALL</b> of these:\n\n")
 		for i, c := range chans {
-			fmt.Fprintf(&sb, "%d. <code>%d</code>\n", i+1, c)
+			if t := titles[c]; t != "" {
+				fmt.Fprintf(&sb, "%d. <b>%s</b>\n    <code>%d</code>\n", i+1, esc(t), c)
+			} else {
+				fmt.Fprintf(&sb, "%d. <code>%d</code>\n", i+1, c)
+			}
 		}
 	}
 	sb.WriteString("\n<i>The bot must be admin in each channel (invite permission).</i>")
 
 	rows := [][]gotgbot.InlineKeyboardButton{}
 	for _, c := range chans {
+		label := fmt.Sprintf("❌ Remove %d", c)
+		if t := titles[c]; t != "" {
+			label = "❌ Remove " + truncate(t, 24)
+		}
 		rows = append(rows, []gotgbot.InlineKeyboardButton{
-			admBtn(fmt.Sprintf("❌ Remove %d", c), fmt.Sprintf("admp.fsubdel.%d", c)),
+			admBtn(label, fmt.Sprintf("admp.fsubdel.%d", c)),
 		})
 	}
 	rows = append(rows, []gotgbot.InlineKeyboardButton{admBtn("➕ Add Channel", "admc.fsubadd")})
@@ -259,7 +268,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		log.Printf("admin removed force-join channel %d", chatID)
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "❌ Channel removed."})
-		text, kb := admFsubView()
+		text, kb := admFsubView(b)
 		admEdit(b, msg, text, kb)
 		return nil
 	}
@@ -284,7 +293,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	case "fsub":
 		_, _ = query.Answer(b, nil)
-		text, kb := admFsubView()
+		text, kb := admFsubView(b)
 		admEdit(b, msg, text, kb)
 
 	case "fsubclear":
@@ -296,7 +305,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("admin cleared all force-join channels")
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 			Text: "🧹 Cleared — bot is now open access.", ShowAlert: true})
-		text, kb := admFsubView()
+		text, kb := admFsubView(b)
 		admEdit(b, msg, text, kb)
 
 	case "claimstoggle":
@@ -922,7 +931,7 @@ func adminConversationBack(b *gotgbot.Bot, ctx *ext.Context) error {
 	case "codes":
 		text, kb = admCodesView()
 	case "fsub":
-		text, kb = admFsubView()
+		text, kb = admFsubView(b)
 	case "admins":
 		text, kb = admAdminsView()
 	default: // "settings" and anything unknown land on the settings hub

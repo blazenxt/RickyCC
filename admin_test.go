@@ -209,3 +209,17 @@ func TestUserMgmtStyles(t *testing.T) {
 		}
 	}
 }
+
+// The fsub view must render gracefully with a nil bot (tests / first boot
+// before the client exists): no panics, header + per-channel rows present.
+func TestAdmFsubViewNilBot(t *testing.T) {
+	text, kb := admFsubView(nil)
+	if !strings.Contains(text, "Force-Join Setup") {
+		t.Fatalf("header missing: %q", text)
+	}
+	for _, row := range kb.InlineKeyboard {
+		if len(row) == 0 {
+			t.Fatal("empty keyboard row")
+		}
+	}
+}

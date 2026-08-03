@@ -75,3 +75,26 @@ func TestFsubSatisfied(t *testing.T) {
 		}
 	}
 }
+
+// Join buttons wear the channel's real name when it resolves, with the
+// numbered generic label as fallback (long names are truncated so the
+// button stays well inside Telegram's limits).
+func TestJoinButtonLabel(t *testing.T) {
+	if got := joinButtonLabel(0, ""); got != "📢 Join Channel 1" {
+		t.Fatalf("fallback label = %q", got)
+	}
+	if got := joinButtonLabel(4, ""); got != "📢 Join Channel 5" {
+		t.Fatalf("fallback label = %q", got)
+	}
+	if got := joinButtonLabel(0, "Deals Hub"); got != "📢 Deals Hub" {
+		t.Fatalf("named label = %q", got)
+	}
+	long := strings.Repeat("x", 60)
+	got := joinButtonLabel(2, long)
+	if !strings.HasPrefix(got, "📢 ") || !strings.HasSuffix(got, "…") {
+		t.Fatalf("long title should truncate with ellipsis: %q", got)
+	}
+	if n := len([]rune(got)); n > 43 { // "📢 " (2) + 40 + "…" (1)
+		t.Fatalf("label too long: %d runes", n)
+	}
+}
