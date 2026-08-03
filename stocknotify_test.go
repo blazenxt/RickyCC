@@ -134,3 +134,39 @@ func TestAnnounceChannelsConfig(t *testing.T) {
 		t.Fatal("relay-off must survive a reload")
 	}
 }
+
+// The plain fallback keyboard must keep the callback + color but carry NO
+// icon_custom_emoji_id, with the full emoji label intact — that's what
+// guarantees delivery in channels that reject custom-emoji fields.
+func TestStockNotifyPlainKeyboard(t *testing.T) {
+	kb := stockNotifyPlainKeyboard()
+	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 1 {
+		t.Fatalf("expected single-button keyboard: %+v", kb)
+	}
+	btn := kb.InlineKeyboard[0][0]
+	if btn.CallbackData != "stockopen" {
+		t.Fatalf("callback = %q", btn.CallbackData)
+	}
+	if btn.IconCustomEmojiId != "" {
+		t.Fatalf("plain variant must not carry an icon id: %q", btn.IconCustomEmojiId)
+	}
+	if btn.Text != "🚀 Open Bot" {
+		t.Fatalf("plain variant keeps the full emoji label, got %q", btn.Text)
+	}
+	if btn.Style != "success" {
+		t.Fatalf("color survives the strip: %q", btn.Style)
+	}
+}
+
+// The add-time verdict line tells the admin exactly what to expect.
+func TestPremiumChannelNote(t *testing.T) {
+	if got := premiumChannelNote(true); !strings.Contains(got, "verified") {
+		t.Fatalf("positive note should confirm: %q", got)
+	}
+	got := premiumChannelNote(false)
+	for _, want := range []string{"not available", "fragment", "standard emoji"} {
+		if !strings.Contains(strings.ToLower(got), want) {
+			t.Fatalf("negative note should mention %q: %q", want, got)
+		}
+	}
+}

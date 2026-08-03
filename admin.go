@@ -1280,9 +1280,9 @@ func adminAlertsAddMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	log.Printf("admin added stock-alert channel %d (%s)", chatID, chat.Title)
-	_, _ = msg.Reply(b, fmt.Sprintf(
-		"✅ <b>Stock-alert channel added!</b>\n\n🔔 %s\n🆔 <code>%d</code>\n\nNext stock update will be posted here too.",
-		esc(chat.Title), chatID),
+	_, _ = msg.Reply(b, premiumize(fmt.Sprintf(
+		"✅ <b>Stock-alert channel added!</b>\n\n🔔 %s\n🆔 <code>%d</code>%s\n\nNext stock update will be posted here too.",
+		esc(chat.Title), chatID, premiumChannelNote(probePremiumSupport(b, chatID)))),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return handlers.EndConversation()
 }

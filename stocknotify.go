@@ -41,15 +41,54 @@ func stockNotifyText(added int, total int64, adminName string) string {
 		esc(BrandName), added, total, esc(adminName))
 }
 
-// stockNotifyKeyboard is the single "Open Bot" CTA (goes through the
-// premium/style decorator like every other keyboard).
-func stockNotifyKeyboard() gotgbot.InlineKeyboardMarkup {
-	kb := gotgbot.InlineKeyboardMarkup{
-		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			{{Text: "🚀 Open Bot", CallbackData: "stockopen"}},
-		},
+// stockNotifyRows is the single source of truth for the CTA row — used by
+// both the decorated and the plain keyboard variants below.
+func stockNotifyRows() [][]gotgbot.InlineKeyboardButton {
+	return [][]gotgbot.InlineKeyboardButton{
+		{{Text: "🚀 Open Bot", CallbackData: "stockopen"}},
 	}
+}
+
+// stockNotifyKeyboard is the announcement CTA with the premium icon + color.
+func stockNotifyKeyboard() gotgbot.InlineKeyboardMarkup {
+	kb := gotgbot.InlineKeyboardMarkup{InlineKeyboard: stockNotifyRows()}
 	return *decorateButtons(&kb)
+}
+
+// stockNotifyPlainKeyboard keeps only the color (safe everywhere) and skips
+// icon_custom_emoji_id — used by the fallback retry so a channel that can't
+// host custom emoji still receives the full "🚀 Open Bot" label.
+func stockNotifyPlainKeyboard() gotgbot.InlineKeyboardMarkup {
+	kb := gotgbot.InlineKeyboardMarkup{InlineKeyboard: stockNotifyRows()}
+	applyButtonStyles(&kb)
+	return kb
+}
+
+// probePremiumSupport test-sends one hidden custom-emoji probe to a chat and
+// deletes it right away, reporting whether premium emoji can render there.
+//
+// Telegram's rule (Bot API — code can't change it): private/group/supergroup
+// chats allow bot custom emoji when the bot OWNER has Premium; CHANNELS
+// require the bot to own a Fragment-bought extra username.
+func probePremiumSupport(b *gotgbot.Bot, chatID int64) bool {
+	probe, err := b.SendMessage(chatID,
+		`<tg-emoji emoji-id="`+premiumEmojiDefaults["party"]+`">`+iconDefaults["party"]+`</tg-emoji>`,
+		&gotgbot.SendMessageOpts{ParseMode: "HTML", DisableNotification: true})
+	if err != nil {
+		return false
+	}
+	_, _ = b.DeleteMessage(chatID, probe.MessageId, nil)
+	return true
+}
+
+// premiumChannelNote is the verdict line shown when an alert channel is
+// added, so the admin instantly knows what announcements will look like.
+func premiumChannelNote(supported bool) string {
+	if supported {
+		return "\n✨ Premium emoji: <b>verified</b> — announcements render premium here."
+	}
+	return "\n⚠️ Premium emoji: <b>not available in this chat</b> — announcements fall back to standard emoji. " +
+		"(Channels need the bot to own a Fragment extra username; private/group chats work with owner Premium.)"
 }
 
 // stockNotifyTargets builds the channel/group destination set for an
@@ -86,6 +125,7 @@ func broadcastStockUpdate(b *gotgbot.Bot, added int, total int64, adminName stri
 
 	text := premiumize(stockNotifyText(added, total, adminName))
 	kb := stockNotifyKeyboard()
+	kbPlain := stockNotifyPlainKeyboard()
 
 	send := func(chatID int64) bool {
 		_, err := b.SendMessage(chatID, text, &gotgbot.SendMessageOpts{
@@ -96,10 +136,12 @@ func broadcastStockUpdate(b *gotgbot.Bot, added int, total int64, adminName stri
 		if err == nil {
 			return true
 		}
-		// Safety net: if custom emoji ever rejects, deliver stripped.
+		// Fallback: stripped text AND a keyboard WITHOUT icon_custom_emoji_id
+		// — channels without a Fragment-bot-username reject both, and this
+		// guarantees the announcement (and its button) still lands.
 		_, err2 := b.SendMessage(chatID, stripTGEmoji(text), &gotgbot.SendMessageOpts{
 			ParseMode:   "HTML",
-			ReplyMarkup: kb,
+			ReplyMarkup: kbPlain,
 		})
 		return err2 == nil
 	}
