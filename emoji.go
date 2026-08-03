@@ -444,6 +444,7 @@ func buttonStyle(btn gotgbot.InlineKeyboardButton) string {
 		d == "stockopen" || // stock announcement "Open Bot"
 		d == "admc.addcodes" || d == "admc.fsubadd" || d == "admc.adminadd" ||
 		d == "admc.alertsadd" ||
+		strings.HasPrefix(d, "admp.tzset.") || // time-zone preset select
 		d == "admp.emojipremium" {
 		return "success"
 	}

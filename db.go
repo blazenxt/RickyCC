@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS settings (
     emoji_ids       TEXT    NOT NULL DEFAULT '{}',
     announce_channels TEXT  NOT NULL DEFAULT '[]',
     announce_fsub   INTEGER NOT NULL DEFAULT 0,
-    userbot_session TEXT    NOT NULL DEFAULT ''
+    userbot_session TEXT    NOT NULL DEFAULT '',
+    tz              TEXT    NOT NULL DEFAULT 'UTC'
 );
 CREATE TABLE IF NOT EXISTS join_requests (
     channel_id   INTEGER NOT NULL,
@@ -193,7 +194,8 @@ CREATE TABLE IF NOT EXISTS settings (
     emoji_ids       TEXT    NOT NULL DEFAULT '{}',
     announce_channels TEXT  NOT NULL DEFAULT '[]',
     announce_fsub   INTEGER NOT NULL DEFAULT 0,
-    userbot_session TEXT    NOT NULL DEFAULT ''
+    userbot_session TEXT    NOT NULL DEFAULT '',
+    tz              TEXT    NOT NULL DEFAULT 'UTC'
 );
 CREATE TABLE IF NOT EXISTS join_requests (
     channel_id   BIGINT NOT NULL,
@@ -214,6 +216,7 @@ var settingsMigrations = []string{
 	`ALTER TABLE settings ADD COLUMN announce_channels TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE settings ADD COLUMN announce_fsub INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE settings ADD COLUMN userbot_session TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE settings ADD COLUMN tz TEXT NOT NULL DEFAULT 'UTC'`,
 }
 
 var settingsMigrationsPG = []string{
@@ -224,6 +227,7 @@ var settingsMigrationsPG = []string{
 	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS announce_channels TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS announce_fsub INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS userbot_session TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE settings ADD COLUMN IF NOT EXISTS tz TEXT NOT NULL DEFAULT 'UTC'`,
 }
 
 // userMigrations brings older user tables to the repeat-reward model:

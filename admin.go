@@ -5,7 +5,6 @@ import (
 	"log"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -137,6 +136,7 @@ func admSettingsView() (string, gotgbot.InlineKeyboardMarkup) {
 			{admBtn("🎯 Referral Target", "admc.target"), admBtn(toggleLabel, "admp.claimstoggle")},
 			{admBtn("🆘 Support Link", "admc.support"), admBtn("📖 How-to Text", "admc.howto")},
 			{admBtn("🎨 Custom Emojis", "admc.emojis"), admBtn("⚡ Load Premium Set", "admp.emojipremium")},
+			{admBtn("🤖 Bot Settings", "admp.botset")},
 			admBackBtn(),
 		},
 	}
@@ -293,6 +293,20 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	action := strings.TrimPrefix(query.Data, "admp.")
 
+	// Time-zone preset selection carries the IANA name: admp.tzset.<name>
+	if name, ok := strings.CutPrefix(action, "tzset."); ok {
+		if err := setTZName(name); err != nil {
+			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+				Text: "❌ " + CustomError(err).Error(), ShowAlert: true})
+			return nil
+		}
+		p, _ := tzPresetByName(name)
+		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🕐 Time zone → " + p.Label})
+		text, kb := admTZView()
+		admEdit(b, msg, text, kb)
+		return nil
+	}
+
 	// Admin removal carries an ID: admp.admindel.<id> (owner only)
 	if idStr, ok := strings.CutPrefix(action, "admindel."); ok {
 		if !isOwner(query.From.Id) {
@@ -379,6 +393,16 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	case "settings":
 		_, _ = query.Answer(b, nil)
 		text, kb := admSettingsView()
+		admEdit(b, msg, text, kb)
+
+	case "botset":
+		_, _ = query.Answer(b, nil)
+		text, kb := admBotSettingsView()
+		admEdit(b, msg, text, kb)
+
+	case "tz":
+		_, _ = query.Answer(b, nil)
+		text, kb := admTZView()
 		admEdit(b, msg, text, kb)
 
 	case "fsub":
@@ -522,7 +546,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				icon("ticket")+" Cards available: <b>%d</b>\n"+
 				icon("ok")+" Cards claimed: <b>%d</b>\n\n"+
 				icon("clock")+" <i>Refreshed %s</i>",
-			total, banned, claimedU, avail, claimedC, time.Now().Format("15:04:05")),
+			total, banned, claimedU, avail, claimedC, botNow().Format("15:04:05")),
 			gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 					{admBtn("🔄 Refresh", "admp.dash")},
@@ -595,7 +619,7 @@ func adminCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		for _, c := range claims {
 			when := "—"
 			if c.ClaimedAt != nil {
-				when = c.ClaimedAt.Format(admTimeFmt)
+				when = fmtBotTime(*c.ClaimedAt, admTimeFmt)
 			}
 			fmt.Fprintf(&sb, "• <code>%s</code>\n  → <code>%d</code> · %s\n",
 				esc(truncate(c.Card, 30)), c.ClaimedBy, when)
@@ -748,7 +772,7 @@ func adminUserCardView(u *User) (string, gotgbot.InlineKeyboardMarkup) {
 	}
 	joined := "—"
 	if !u.JoinedAt.IsZero() {
-		joined = u.JoinedAt.Format(admTimeFmt)
+		joined = fmtBotTime(u.JoinedAt, admTimeFmt)
 	}
 
 	text := fmt.Sprintf(

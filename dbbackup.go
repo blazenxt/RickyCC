@@ -80,10 +80,10 @@ func runDBBackup(b *gotgbot.Bot, chatID int64, reason string) error {
 		&gotgbot.SendDocumentOpts{
 			Caption: premiumize(fmt.Sprintf(
 				"💾 <b>%s — database backup</b> <i>(%s)</i>\n\n"+
-					"🕒 %s UTC\n📦 %.1f KB\n\n"+
+					"🕒 %s\n📦 %.1f KB\n\n"+
 					"<i>Kept pinned — the bot restores from this file automatically on the next deploy.</i>",
 				BrandName, reason,
-				time.Now().UTC().Format("02 Jan 2006 15:04"), float64(len(data))/1024)),
+				fmtBotTime(time.Now(), "02 Jan 2006 15:04 MST"), float64(len(data))/1024)),
 			ParseMode: "HTML",
 		})
 	if err != nil {

@@ -52,12 +52,12 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 		log.Printf("config: failed to seed settings: %v", err)
 	}
 
-	var fsubRaw, adminsRaw, support, howto, emojisRaw, announceRaw string
+	var fsubRaw, adminsRaw, support, howto, emojisRaw, announceRaw, tzRaw string
 	var target, paused, fsubPausedFlag, announceFsubFlag int
 	var logID int64
 	err = db.QueryRow(
-		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids, fsub_paused, announce_channels, announce_fsub FROM settings WHERE id = 1",
-	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw, &fsubPausedFlag, &announceRaw, &announceFsubFlag)
+		"SELECT log_chat_id, fsub_channels, referral_target, claims_paused, admin_ids, support_url, howto_text, emoji_ids, fsub_paused, announce_channels, announce_fsub, tz FROM settings WHERE id = 1",
+	).Scan(&logID, &fsubRaw, &target, &paused, &adminsRaw, &support, &howto, &emojisRaw, &fsubPausedFlag, &announceRaw, &announceFsubFlag, &tzRaw)
 	if err != nil {
 		log.Printf("config: failed to read settings: %v", err)
 		return
@@ -82,6 +82,8 @@ func loadConfig(envLogChatID int64, envFsubIDs []int64) {
 	howtoText = howto
 	customIcons = icons
 	cfgMu.Unlock()
+
+	applyTZ(tzRaw) // display time zone (falls back to UTC on junk)
 
 	if target > 0 {
 		ReferralTarget = target
