@@ -34,6 +34,7 @@ func adminMenuCommands() []gotgbot.BotCommand {
 		gotgbot.BotCommand{Command: "stats", Description: "Bot statistics"},
 		gotgbot.BotCommand{Command: "broadcast", Description: "Broadcast a message (reply)"},
 		gotgbot.BotCommand{Command: "backupdb", Description: "Download database backup"},
+		gotgbot.BotCommand{Command: "userbot", Description: "Premium channel editor login (owner)"},
 	)
 }
 

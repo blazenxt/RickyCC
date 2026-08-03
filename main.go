@@ -55,6 +55,14 @@ func main() {
 		envLogChatID = 0
 	}
 
+	// API_ID + API_HASH (my.telegram.org) power the OPTIONAL MTProto premium
+	// editor (/userbot). The bot works fully without them.
+	apiID, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("API_ID")))
+	apiHash := strings.TrimSpace(os.Getenv("API_HASH"))
+	if apiID == 0 || apiHash == "" {
+		log.Println("API_ID/API_HASH not set — MTProto premium editor disabled (bot works fine without it)")
+	}
+
 	// FSUB_IDS (comma-separated) seeds the force-join channels on first boot.
 	var envFsubIDs []int64
 	fsubEnv := strings.TrimSpace(os.Getenv("FSUB_IDS"))
@@ -126,6 +134,12 @@ func main() {
 	// owner+admins, none in groups).
 	setupBotMenu(bot)
 
+	// MTProto premium editor: wire credentials + identity, then silently
+	// resume if the owner logged in before (session lives in the DB).
+	ubMgr.configure(apiID, apiHash, bot, OwnerID)
+	ubMgr.setBotID(bot.User.Id)
+	go ubMgr.autoResume()
+
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
 			log.Println("an error occurred while handling update:", err.Error())
@@ -144,6 +158,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCommand("stats", stats))
 	dispatcher.AddHandler(handlers.NewCommand("broadcast", broadcast))
 	dispatcher.AddHandler(handlers.NewCommand("backupdb", backupCmd))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ubl."), userbotCallback))
 
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("progress"), progressCallback))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("claim"), claim))
@@ -210,6 +225,21 @@ func main() {
 		},
 		&handlers.ConversationOpts{
 			Exits:        []ext.Handler{handlers.NewCommand("cancel", adminCancel)},
+			StateStorage: conversation.NewInMemoryStorage(conversation.KeyStrategySenderAndChat),
+			AllowReEntry: true,
+		},
+	))
+
+	// Userbot login conversation (/userbot — owner only, DM only). Cancelling
+	// or backing out aborts any pending MTProto login run so no goroutine is
+	// left parked waiting for a phone/OTP that will never arrive.
+	dispatcher.AddHandler(handlers.NewConversation(
+		[]ext.Handler{handlers.NewCommand("userbot", userbotCommand)},
+		map[string][]ext.Handler{
+			ubStateInput: {handlers.NewMessage(anyText, userbotInputMessage), handlers.NewCallback(callbackquery.Prefix("admcback"), userbotConversationBack)},
+		},
+		&handlers.ConversationOpts{
+			Exits:        []ext.Handler{handlers.NewCommand("cancel", userbotCancel)},
 			StateStorage: conversation.NewInMemoryStorage(conversation.KeyStrategySenderAndChat),
 			AllowReEntry: true,
 		},

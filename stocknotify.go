@@ -127,28 +127,33 @@ func broadcastStockUpdate(b *gotgbot.Bot, added int, total int64, adminName stri
 	kb := stockNotifyKeyboard()
 	kbPlain := stockNotifyPlainKeyboard()
 
-	send := func(chatID int64) bool {
-		_, err := b.SendMessage(chatID, text, &gotgbot.SendMessageOpts{
+	// send returns ok + the posted message ID — the MTProto premium editor
+	// (userbot) uses the ID to recognise the bot's own channel posts.
+	send := func(chatID int64) (bool, int) {
+		m, err := b.SendMessage(chatID, text, &gotgbot.SendMessageOpts{
 			ParseMode:          "HTML",
 			ReplyMarkup:        kb,
 			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true},
 		})
 		if err == nil {
-			return true
+			return true, int(m.MessageId)
 		}
 		// Fallback: stripped text AND a keyboard WITHOUT icon_custom_emoji_id
 		// — channels without a Fragment-bot-username reject both, and this
 		// guarantees the announcement (and its button) still lands.
-		_, err2 := b.SendMessage(chatID, stripTGEmoji(text), &gotgbot.SendMessageOpts{
+		m2, err2 := b.SendMessage(chatID, stripTGEmoji(text), &gotgbot.SendMessageOpts{
 			ParseMode:   "HTML",
 			ReplyMarkup: kbPlain,
 		})
-		return err2 == nil
+		if err2 != nil {
+			return false, 0
+		}
+		return true, int(m2.MessageId)
 	}
 
 	sent, failed := 0, 0
 	for _, u := range users {
-		if send(u.ID) {
+		if ok, _ := send(u.ID); ok {
 			sent++
 		} else {
 			failed++
@@ -159,8 +164,9 @@ func broadcastStockUpdate(b *gotgbot.Bot, added int, total int64, adminName stri
 	targets := stockNotifyTargets(getAnnounceChannels(), getFsubChannels(), getAnnounceFsub())
 	sentChats, failedChats := 0, 0
 	for _, id := range targets {
-		if send(id) {
+		if ok, msgID := send(id); ok {
 			sentChats++
+			ubMgr.notePosted(id, msgID)
 		} else {
 			failedChats++
 			log.Printf("stock notify: channel post failed for %d (bot admin there?)", id)

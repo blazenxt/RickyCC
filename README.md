@@ -101,7 +101,28 @@ Tap a button, fill in `TOKEN` + `OWNER_ID`, done:
 - `/stats` — total users, claimed users, card inventory.
 - `/backupdb` — upload & pin a database backup to the `LOGGER_ID` chat right now (auto-backup runs every 30 min anyway).
 - `/broadcast` — reply to any message to send it to all users.
-- `/cancel` — abort an active panel input (find-user / add-cards).
+- `/userbot` — **Premium channel editor** (see below). Login your Premium account once; from then on every stock announcement the bot posts to your channels is edited in-place so the premium custom emojis render there too.
+- `/cancel` — abort an active panel input (find-user / add-cards / userbot login).
+
+---
+
+## 🤖 Premium channel editor (MTProto userbot)
+
+Telegram only lets **bots** use custom emoji in DMs and groups — channel posts with real premium emoji need a paid Fragment collectible username… **or** this workaround:
+
+1. The bot posts the announcement as usual (plain Unicode fallback — always delivered).
+2. A logged-in **Premium user account** (an admin with *Edit messages* rights in the channel) sees the post over MTProto and edits it in place, swapping the Unicode emojis for real `custom_emoji` entities.
+
+Net effect: premium emojis **everywhere**, zero purchase.
+
+**Setup:**
+1. Grab `API_ID` + `API_HASH` from [my.telegram.org](https://my.telegram.org) → *API development tools*, add them to the env, redeploy.
+2. DM the bot `/userbot` and follow the prompts (phone → login code → optional 2FA password). DM-only by design — never type these in a group.
+3. Done. The session lives in the `settings` table, so redeploys resume it silently (`BACKUPDB` covers it on SQLite; Postgres persists it natively).
+
+**Requirements:** the account needs Telegram **Premium** and *Edit messages* admin rights in every announcement channel. `/userbot` → **Logout** wipes the stored session instantly.
+
+> ⚠️ The stored session grants **full account access** — treat your database/backups like a password, and never share the session string with anyone. Optional feature: without `API_ID`/`API_HASH` the bot works exactly as before, channels just keep standard emoji.
 
 ---
 
