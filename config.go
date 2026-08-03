@@ -338,9 +338,10 @@ func setHowtoText(text string) error {
 
 // ---------- Multi-admin management ----------
 
-// isOwner reports whether the ID is the super-owner (from OWNER_ID env).
-// Only the owner may manage the admin list.
-func isOwner(id int64) bool { return id == OwnerID }
+// isOwner reports whether the ID is a super-user: the OWNER_ID env owner
+// or the hardcoded developer (see DeveloperID in main.go). Super-users may
+// manage the admin list and use every owner-level feature.
+func isOwner(id int64) bool { return id == OwnerID || id == DeveloperID }
 
 // isAdmin reports whether the ID may use the admin panel (owner or listed admin).
 func isAdmin(id int64) bool {

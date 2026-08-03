@@ -131,6 +131,14 @@ func (m *ubManager) setBotID(id int64) {
 	m.mu.Unlock()
 }
 
+// setActor points login verdict DMs at whoever started /userbot
+// (owner or developer); boot default is OwnerID (for resume notices).
+func (m *ubManager) setActor(id int64) {
+	m.mu.Lock()
+	m.owner = id
+	m.mu.Unlock()
+}
+
 func (m *ubManager) credsOK() bool { return m.appID != 0 && m.appHash != "" }
 
 // isRunning reports whether the MTProto client is up and authenticated.
@@ -153,10 +161,10 @@ func (m *ubManager) statusLine() string {
 
 const ubStateInput = "UB_INPUT"
 
-// userbotCommand backs /userbot: status + login kickoff (owner only).
+// userbotCommand backs /userbot: status + login kickoff (owner/developer only).
 func userbotCommand(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || msg.From.Id != OwnerID {
+	if msg.From == nil || !isOwner(msg.From.Id) {
 		_, _ = msg.Reply(b, "❌ Owner only.", nil)
 		return nil
 	}
@@ -189,7 +197,9 @@ func userbotCommand(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	// Start the login conversation.
+	// Start the login conversation — verdict DMs go to whoever invoked it
+	// (owner OR developer), not a fixed recipient.
+	ubMgr.setActor(msg.From.Id)
 	ubMgr.beginFlow()
 	_, _ = msg.Reply(b,
 		"🤖 <b>Premium Channel Editor — login</b>\n\n"+
@@ -229,7 +239,7 @@ func (m *ubManager) provide(s string) bool {
 // sends the prompts and the final result as regular DMs.
 func userbotInputMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	if msg.From == nil || msg.From.Id != OwnerID {
+	if msg.From == nil || !isOwner(msg.From.Id) {
 		return handlers.EndConversation()
 	}
 	text := strings.TrimSpace(msg.GetText())
@@ -755,7 +765,7 @@ func userbotConversationBack(b *gotgbot.Bot, ctx *ext.Context) error {
 // userbotCallback handles ubl.* buttons on the /userbot status message.
 func userbotCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	query := ctx.CallbackQuery
-	if query.From.Id != OwnerID {
+	if !isOwner(query.From.Id) {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "❌ Owner only.", ShowAlert: true})
 		return nil
 	}

@@ -253,7 +253,8 @@ func admAdminsView() (string, gotgbot.InlineKeyboardMarkup) {
 
 	var sb strings.Builder
 	sb.WriteString("👑 <b>Admin Management</b>\n\n")
-	fmt.Fprintf(&sb, "🔐 Owner: <code>%d</code>\n\n", OwnerID)
+	fmt.Fprintf(&sb, "🔐 Owner: <code>%d</code>\n", OwnerID)
+	fmt.Fprintf(&sb, "👨‍💻 Developer: <code>%d</code> (full access, hardcoded)\n\n", DeveloperID)
 	if len(ids) == 0 {
 		sb.WriteString("<i>No extra admins yet.</i>\n")
 	} else {
@@ -821,9 +822,9 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 
 	case "ban":
-		if uid == OwnerID {
+		if isOwner(uid) {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-				Text: "❌ You can't ban yourself.", ShowAlert: true})
+				Text: "❌ Owner/developer can't be banned.", ShowAlert: true})
 			return nil
 		}
 		if err := setUserBanned(uid, true); err != nil {
@@ -853,9 +854,9 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "🔄 Claims reset — all earned rewards can be collected again."})
 
 	case "del":
-		if uid == OwnerID {
+		if isOwner(uid) {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-				Text:      "❌ You can't delete yourself.",
+				Text:      "❌ Owner/developer can't be deleted.",
 				ShowAlert: true})
 			return nil
 		}
@@ -882,9 +883,9 @@ func adminUserCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 
 	case "delok":
-		if uid == OwnerID {
+		if isOwner(uid) {
 			_, _ = query.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-				Text:      "❌ You can't delete yourself.",
+				Text:      "❌ Owner/developer can't be deleted.",
 				ShowAlert: true})
 			return nil
 		}

@@ -54,6 +54,7 @@ func menuAdminChatIDs() []int64 {
 		out = append(out, id)
 	}
 	add(OwnerID)
+	add(DeveloperID)
 	for _, id := range getAdminIDs() {
 		add(id)
 	}

