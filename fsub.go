@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -26,10 +27,60 @@ var (
 // who have never joined), as opposed to a real API failure.
 func isNotMemberErr(err error) bool {
 	s := strings.ToLower(err.Error())
+	// "bot is not a member…" / "bot was kicked…" name the BOT, not the
+	// user — that's a broken channel, never a user-membership verdict.
+	if strings.Contains(s, "bot is not") || strings.Contains(s, "bot was kicked") {
+		return false
+	}
 	return strings.Contains(s, "user not found") ||
 		strings.Contains(s, "participant_not_a_member") ||
 		strings.Contains(s, "member_not_found") ||
 		strings.Contains(s, "not a member")
+}
+
+// ── broken-force-join-channel alerts (fail-open support) ────────────────────
+//
+// When a configured channel becomes unverifiable (bot kicked, rights lost,
+// chat deleted, API hiccup) users must NOT be locked out — but the owner
+// has to know. One alert per channel per 30 minutes, in-memory.
+
+var (
+	brokenChanMu   sync.Mutex
+	brokenChanSeen = map[int64]time.Time{}
+)
+
+const brokenChanCooldown = 30 * time.Minute
+
+// markBrokenAlert records an alert attempt and reports whether one should
+// actually fire for this channel right now.
+func markBrokenAlert(chatID int64, now time.Time) bool {
+	brokenChanMu.Lock()
+	defer brokenChanMu.Unlock()
+	if t, ok := brokenChanSeen[chatID]; ok && now.Sub(t) < brokenChanCooldown {
+		return false
+	}
+	brokenChanSeen[chatID] = now
+	return true
+}
+
+// alertBrokenFsubChannel logs + notifies the log chat once per cooldown:
+// "this channel can't be checked — users are skipping it, fix or remove it".
+func alertBrokenFsubChannel(b *gotgbot.Bot, chatID int64, cause error) {
+	if !markBrokenAlert(chatID, time.Now()) {
+		return
+	}
+	reason := "unknown error"
+	if cause != nil {
+		reason = cause.Error()
+	}
+	name := cachedChannelTitle(chatID)
+	if name == "" {
+		name = "?"
+	}
+	log.Printf("⚠️ force-join channel %d (%s) unverifiable: %s — gate skips it until fixed", chatID, name, reason)
+	notifyLogChat(b, fmt.Sprintf(
+		"⚠️ <b>Force-join channel broken</b>\n\n%s <b>%s</b> · <code>%d</code>\nCause: <code>%s</code>\n\n<i>Users is channel ko skip kar rahe hain — block NAHI ho rahe. Fix: bot ko wahan dobara admin banao (invite rights ke saath), ya /admin → Force-Join se hatao.</i>",
+		icon("warn"), esc(name), chatID, esc(reason)))
 }
 
 func fetchInviteLink(b *gotgbot.Bot, chatID int64) (string, error) {
@@ -169,6 +220,11 @@ func fsubSatisfied(status string, pendingRequest bool) bool {
 // fsubMissingButtons returns one join button (with a working invite link)
 // per channel the user is NOT a member of; empty means fully joined.
 //
+// Fail-open rule: a channel the bot can no longer verify (kicked from it,
+// admin rights removed, chat deleted, API hiccup) SKIPS the gate instead of
+// hard-locking every user behind a dead ❌ error — the log chat gets one
+// rate-limited alert per broken channel telling admins to fix or remove it.
+//
 // Speed: every GetChatMember lookup runs CONCURRENTLY (network round-trips
 // dominate the check; a handful at once stays far below rate limits) and
 // invite links for missing channels are fetched in parallel too — plus
@@ -198,7 +254,10 @@ func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboar
 			userMember, err := b.GetChatMember(chatID, userId, nil)
 			if err != nil {
 				if !isNotMemberErr(err) {
-					results[i] = memberResult{err: err}
+					// Bot-side problem on THIS channel (kicked / lost
+					// rights / chat gone / API hiccup) — must not block
+					// the user; reported once below.
+					results[i] = memberResult{status: "broken", err: err}
 					return
 				}
 				results[i] = memberResult{status: "left"} // never joined / left
@@ -211,8 +270,9 @@ func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboar
 
 	unsatisfied := make([]bool, len(channels))
 	for i, r := range results {
-		if r.err != nil {
-			return nil, fmt.Errorf("error getting chat member: %s", r.err)
+		if r.status == "broken" {
+			alertBrokenFsubChannel(b, channels[i], r.err)
+			continue // fail-open: unverifiable channels can't gate anyone
 		}
 		pending := hasJoinRequest(channels[i], userId)
 		if !fsubSatisfied(r.status, pending) {
@@ -245,7 +305,10 @@ func fsubMissingButtons(b *gotgbot.Bot, userId int64) ([][]gotgbot.InlineKeyboar
 			continue
 		}
 		if linkErrs[i] != nil || links[i] == "" {
-			return nil, fmt.Errorf("invite link not available for chat %d", chatID)
+			// No join button possible (lost invite rights?) — same rule as
+			// a broken membership check: skip + alert, never trap users.
+			alertBrokenFsubChannel(b, chatID, linkErrs[i])
+			continue
 		}
 		// The parallel link fetch above already filled the title cache —
 		// zero extra API calls for the names.

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The retry callback payload must survive a build→parse round trip so the
@@ -133,6 +135,56 @@ func TestFsubPausedGate(t *testing.T) {
 }
 
 // The toggle persists across config reloads (database round-trip).
+// Membership-check errors that mean "the CHANNEL is broken for the bot"
+// (kicked, lost rights, chat gone) must NEVER be mistaken for "user isn't a
+// member" — that misclassification decides skip-gate vs lock-user.
+func TestIsNotMemberErrClassification(t *testing.T) {
+	notMember := []string{
+		"Bad Request: user not found",
+		"PARTICIPANT_NOT_A_MEMBER",
+		"member_not_found",
+		"user is not a member of the chat",
+	}
+	for _, s := range notMember {
+		if !isNotMemberErr(errors.New(s)) {
+			t.Fatalf("%q should count as 'not a member'", s)
+		}
+	}
+	broken := []string{
+		"Forbidden: bot was kicked from the supergroup chat",
+		"Forbidden: bot is not a member of the supergroup chat",
+		"Bad Request: chat not found",
+		"timed out",
+		"Bad Gateway",
+	}
+	for _, s := range broken {
+		if isNotMemberErr(errors.New(s)) {
+			t.Fatalf("%q must be treated as a BROKEN channel, not 'user left'", s)
+		}
+	}
+}
+
+// Broken-channel alerts: one per channel per cooldown, never a spam storm.
+func TestMarkBrokenAlertCooldown(t *testing.T) {
+	brokenChanMu.Lock()
+	brokenChanSeen = map[int64]time.Time{}
+	brokenChanMu.Unlock()
+
+	now := time.Now()
+	if !markBrokenAlert(-1001, now) {
+		t.Fatal("first alert for a channel must fire")
+	}
+	if markBrokenAlert(-1001, now.Add(5*time.Minute)) {
+		t.Fatal("second alert inside the cooldown must be suppressed")
+	}
+	if !markBrokenAlert(-1002, now.Add(5*time.Minute)) {
+		t.Fatal("cooldown is per-channel — a different channel must alert")
+	}
+	if !markBrokenAlert(-1001, now.Add(brokenChanCooldown+time.Minute)) {
+		t.Fatal("after the cooldown the alert must fire again")
+	}
+}
+
 func TestFsubPausedPersists(t *testing.T) {
 	setupTestDB(t)
 	loadConfig(0, nil)
