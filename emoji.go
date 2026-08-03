@@ -111,6 +111,9 @@ var premiumEmojiDefaults = map[string]string{
 	"skip":  "5321335209818339164", // ⏭️
 	"cycle": "5377584064326804458", // ♻️
 	"cart":  "5226656353744862682", // 🛒
+
+	// Fourth wave — owner-supplied IDs.
+	"bell": "6206508629286196237", // 🔔
 }
 
 var iconDefaults = map[string]string{
@@ -191,7 +194,7 @@ var iconDefaults = map[string]string{
 	"cycle": "♻️",
 	"cart":  "🛒",
 
-	// Fourth wave — slot ready, premium ID pending from the owner.
+	// Fourth wave — stock-alert sections (owner-supplied ID).
 	"bell": "🔔",
 }
 

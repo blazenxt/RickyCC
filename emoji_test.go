@@ -240,7 +240,7 @@ func TestSecondWaveDefaultsPresentInSource(t *testing.T) {
 		"adminlock", "find", "trash", "gear", "crown", "diamond", "home",
 		"new", "receipt", "bolt", "rocket", "info", "sad", "pointup",
 		"smalldiamond", "greendot", "num1", "num2", "num3", "num4",
-		"skip", "cycle", "cart",
+		"skip", "cycle", "cart", "bell",
 	}
 
 	var src strings.Builder
